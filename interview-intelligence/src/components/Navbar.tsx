@@ -1,63 +1,84 @@
 "use client";
 
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
+import { Menu, X } from "lucide-react";
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, logout } = useAuth(); // Assuming useAuth exists and works as before
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 20);
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 glass">
+    <motion.nav
+      initial={{ y: -100 }}
+      animate={{ y: 0 }}
+      transition={{ duration: 0.5 }}
+      className={cn(
+        "fixed top-0 left-0 right-0 z-50 transition-all duration-300 border-b border-transparent",
+        scrolled
+          ? "bg-black/50 backdrop-blur-xl border-white/5 shadow-lg"
+          : "bg-transparent"
+      )}
+    >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+          <Link href="/" className="flex items-center gap-2 group">
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
               <span className="text-white font-bold text-sm md:text-lg">II</span>
             </div>
-            <span className="font-bold text-lg md:text-xl hidden sm:block">Interview Intelligence</span>
+            <span className="font-bold text-lg md:text-xl hidden sm:block tracking-tight">
+              Interview Intelligence
+            </span>
           </Link>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-8">
-            <Link href="/#features" className="text-sm text-white/60 hover:text-white transition-colors">Features</Link>
-            <Link href="/#pricing" className="text-sm text-white/60 hover:text-white transition-colors">Pricing</Link>
-            <Link href="/research" className="text-sm text-white/60 hover:text-white transition-colors">Research</Link>
-            <Link href="/#contact" className="text-sm text-white/60 hover:text-white transition-colors">Contact</Link>
+            {["Features", "Pricing", "Research", "Contact"].map((item) => (
+              <Link
+                key={item}
+                href={`/#${item.toLowerCase()}`}
+                className="text-sm text-white/60 hover:text-white transition-colors relative group"
+              >
+                {item}
+                <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-300 group-hover:w-full" />
+              </Link>
+            ))}
           </div>
 
-          {/* Auth Buttons */}
+          {/* Desktop Auth Buttons */}
           <div className="hidden md:flex items-center gap-4">
             {user ? (
               <>
-                <Link
-                  href="/dashboard"
-                  className="px-4 py-2 rounded-full text-sm text-white/80 hover:text-white transition-colors"
-                >
-                  Dashboard
+                <Link href="/dashboard">
+                  <Button variant="ghost" size="sm">Dashboard</Button>
                 </Link>
-                <button
-                  onClick={logout}
-                  className="px-4 py-2 rounded-full text-sm bg-white/10 text-white hover:bg-white/20 transition-colors"
-                >
+                <Button variant="secondary" size="sm" onClick={logout}>
                   Logout
-                </button>
+                </Button>
               </>
             ) : (
               <>
-                <Link
-                  href="/login"
-                  className="px-4 py-2 rounded-full text-sm text-white/80 hover:text-white transition-colors"
-                >
-                  Sign In
+                <Link href="/login">
+                  <Button variant="ghost" size="sm">Sign In</Button>
                 </Link>
-                <Link
-                  href="/register"
-                  className="px-6 py-2.5 rounded-full bg-white text-black font-medium text-sm hover:bg-white/90 transition-colors"
-                >
-                  Get Started
+                <Link href="/register">
+                  <Button variant="primary" size="sm" className="shadow-lg shadow-blue-500/20">
+                    Get Started
+                  </Button>
                 </Link>
               </>
             )}
@@ -66,43 +87,58 @@ export default function Navbar() {
           {/* Mobile Menu Button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 text-white/80"
+            className="md:hidden p-2 text-white/80 hover:text-white transition-colors"
           >
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              {mobileMenuOpen ? (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              )}
-            </svg>
+            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
         </div>
+      </div>
 
-        {/* Mobile Menu */}
+      {/* Mobile Menu Overlay */}
+      <AnimatePresence>
         {mobileMenuOpen && (
-          <div className="md:hidden py-4 border-t border-white/10">
-            <div className="flex flex-col gap-4">
-              <Link href="/#features" className="text-sm text-white/60 hover:text-white transition-colors">Features</Link>
-              <Link href="/#pricing" className="text-sm text-white/60 hover:text-white transition-colors">Pricing</Link>
-              <Link href="/research" className="text-sm text-white/60 hover:text-white transition-colors">Research</Link>
-              <Link href="/#contact" className="text-sm text-white/60 hover:text-white transition-colors">Contact</Link>
-              <div className="border-t border-white/10 pt-4 flex flex-col gap-2">
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="md:hidden bg-black/90 backdrop-blur-xl border-t border-white/10 overflow-hidden"
+          >
+            <div className="px-4 py-6 space-y-4">
+              {["Features", "Pricing", "Research", "Contact"].map((item) => (
+                <Link
+                  key={item}
+                  href={`/#${item.toLowerCase()}`}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="block text-lg font-medium text-white/70 hover:text-white hover:pl-2 transition-all"
+                >
+                  {item}
+                </Link>
+              ))}
+              <div className="pt-4 border-t border-white/10 flex flex-col gap-3">
                 {user ? (
                   <>
-                    <Link href="/dashboard" className="px-4 py-2 rounded-full text-sm text-center bg-white/10 text-white">Dashboard</Link>
-                    <button onClick={logout} className="px-4 py-2 rounded-full text-sm bg-white text-black">Logout</button>
+                    <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>
+                      <Button variant="ghost" className="w-full justify-start">Dashboard</Button>
+                    </Link>
+                    <Button variant="secondary" className="w-full" onClick={logout}>
+                      Logout
+                    </Button>
                   </>
                 ) : (
                   <>
-                    <Link href="/login" className="px-4 py-2 rounded-full text-sm text-center bg-white/10 text-white">Sign In</Link>
-                    <Link href="/register" className="px-4 py-2 rounded-full text-sm text-center bg-white text-black">Get Started</Link>
+                    <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
+                      <Button variant="ghost" className="w-full justify-start">Sign In</Button>
+                    </Link>
+                    <Link href="/register" onClick={() => setMobileMenuOpen(false)}>
+                      <Button variant="primary" className="w-full">Get Started</Button>
+                    </Link>
                   </>
                 )}
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
-      </div>
-    </nav>
+      </AnimatePresence>
+    </motion.nav>
   );
 }

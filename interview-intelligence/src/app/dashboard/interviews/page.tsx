@@ -1,11 +1,52 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
+import { 
+  Video, 
+  Mic, 
+  Settings, 
+  Plus, 
+  Circle, 
+  Square, 
+  Pause, 
+  MessageSquare, 
+  Sparkles, 
+  Activity, 
+  ArrowLeft,
+  Search,
+  CheckCircle2,
+  Info,
+  ChevronRight
+} from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { GlassCard } from "@/components/ui/GlassCard";
+import { GradientBackground } from "@/components/ui/GradientBackground";
+import { cn } from "@/lib/utils";
 
 export default function InterviewsPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState("");
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    let interval: any;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const candidates = [
     { id: "1", name: "Alex Thompson", position: "Frontend Developer" },
@@ -21,242 +62,285 @@ export default function InterviewsPage() {
   ];
 
   return (
-    <div className="p-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Live Interview</h1>
-          <p className="text-white/50">Conduct AI-assisted interviews with real-time analysis.</p>
-        </div>
-        <Link
-          href="/dashboard/interviews/lobby"
-          className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold hover:shadow-lg hover:shadow-blue-500/25 transition-all flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-          New Interview
-        </Link>
-      </div>
+    <div className="min-h-screen bg-black text-white relative">
+      <GradientBackground />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Main Interview Area */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Video Area */}
-          <div className="rounded-2xl bg-white/[0.02] border border-white/5 overflow-hidden">
-            <div className="aspect-video bg-gradient-to-br from-gray-900 to-black relative">
+      <div className="p-4 md:p-8 max-w-[1600px] mx-auto">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 mb-8">
+          <div className="flex items-center gap-4">
+            <Link href="/dashboard">
+              <Button variant="ghost" size="icon" className="rounded-full bg-white/5 h-10 w-10">
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight mb-1">Live Interview</h1>
+              <p className="text-white/50 text-sm">Conduct AI-assisted interviews with real-time analysis.</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3">
+             <Link href="/dashboard/interviews/lobby">
+              <Button variant="secondary" className="gap-2">
+                <Settings className="w-4 h-4" /> Setup
+              </Button>
+            </Link>
+            <Button className="gap-2 shadow-lg shadow-blue-500/20">
+              <Plus className="w-4 h-4" /> Schedule New
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
+          {/* Main Content Area */}
+          <div className="xl:col-span-3 space-y-8">
+            {/* Video Viewport */}
+            <GlassCard className="p-0 border-none relative overflow-hidden aspect-video bg-black shadow-2xl">
               {!isRecording ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="w-24 h-24 rounded-full bg-white/5 flex items-center justify-center mb-6">
-                    <svg className="w-12 h-12 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                  <p className="text-white/50 text-lg">Ready to start interview</p>
-                  <p className="text-white/30 text-sm mt-2">Select a candidate and click Start Recording</p>
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-blue-900/20 to-purple-900/20">
+                  <motion.div 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="w-24 h-24 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6"
+                  >
+                    <Video className="w-10 h-10 text-white/20" />
+                  </motion.div>
+                  <h3 className="text-xl font-bold mb-2">Ready to Start</h3>
+                  <p className="text-white/40 mb-8 max-w-sm text-center">Select a candidate and connect your camera to begin the AI-powered session.</p>
                 </div>
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center mb-4 mx-auto animate-pulse">
-                      <svg className="w-16 h-16 text-white" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3z" />
-                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                      </svg>
+                  {/* Mock Video Placeholder with scanning effect */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-gray-900 to-black overflow-hidden">
+                    <motion.div 
+                      animate={{ y: ["0%", "100%", "0%"] }}
+                      transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                      className="absolute top-0 left-0 right-0 h-1 bg-blue-500/30 blur-sm z-10" 
+                    />
+                    {/* Pulsing AI points */}
+                    <div className="absolute top-1/4 left-1/3 w-2 h-2 rounded-full bg-blue-400 shadow-[0_0_15px_rgba(59,130,246,1)] animate-ping" />
+                    <div className="absolute top-1/2 right-1/4 w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_15px_rgba(139,92,246,1)] animate-ping" style={{ animationDelay: "1s" }} />
+                  </div>
+                  
+                  <div className="relative z-10 text-center">
+                    <motion.div
+                      animate={{ scale: [1, 1.1, 1] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                      className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-600/20 border border-blue-500/40 flex items-center justify-center mb-6 mx-auto backdrop-blur-md shadow-2xl"
+                    >
+                      <Mic className="w-12 h-12 text-blue-400" />
+                    </motion.div>
+                    <div className="space-y-1">
+                      <p className="text-2xl font-bold tracking-tight">AI Active Analysis</p>
+                      <p className="text-white/50">Processing multimodal signals...</p>
                     </div>
-                    <p className="text-white font-medium text-lg">Recording in progress...</p>
-                    <p className="text-white/50 text-sm mt-1">AI is analyzing in real-time</p>
                   </div>
                 </div>
               )}
 
-              {/* Recording indicator */}
-              {isRecording && (
-                <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-2 rounded-full bg-red-500/20 border border-red-500/30">
-                  <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                  <span className="text-red-400 text-sm font-medium">REC</span>
-                </div>
-              )}
-
-              {/* Time */}
-              {isRecording && (
-                <div className="absolute top-4 right-4 px-3 py-2 rounded-full bg-black/50 text-white/70 text-sm font-mono">
-                  05:23
-                </div>
-              )}
-            </div>
-
-            {/* Controls */}
-            <div className="p-6 border-t border-white/5">
-              <div className="flex flex-col sm:flex-row items-center gap-4">
-                <select
-                  value={selectedCandidate}
-                  onChange={(e) => setSelectedCandidate(e.target.value)}
-                  className="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50 transition-colors"
-                  disabled={isRecording}
-                >
-                  <option value="">Select Candidate</option>
-                  {candidates.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} - {c.position}
-                    </option>
-                  ))}
-                </select>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setIsRecording(!isRecording)}
-                    disabled={!selectedCandidate && !isRecording}
-                    className={`px-6 py-3 rounded-xl font-semibold transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                      isRecording
-                        ? "bg-red-500 text-white hover:bg-red-600"
-                        : "bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-lg hover:shadow-blue-500/25"
-                    }`}
+              {/* Overlays */}
+              <AnimatePresence>
+                {isRecording && (
+                  <motion.div 
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute top-6 left-6 flex items-center gap-3 px-4 py-2 rounded-full bg-red-500/20 backdrop-blur-md border border-red-500/40 z-20"
                   >
-                    {isRecording ? (
-                      <>
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <rect x="6" y="6" width="12" height="12" rx="2" />
-                        </svg>
-                        Stop Recording
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <circle cx="12" cy="12" r="10" />
-                        </svg>
-                        Start Recording
-                      </>
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,1)]" />
+                    <span className="text-red-100 text-sm font-bold tracking-widest">LIVE</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="absolute top-6 right-6 flex items-center gap-4 z-20">
+                <div className="px-4 py-2 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-white font-mono text-sm shadow-xl">
+                  {formatTime(duration)}
+                </div>
+              </div>
+
+              {/* Bottom Controls Overlay */}
+              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-2xl px-8 z-20">
+                <GlassCard className="bg-black/80 backdrop-blur-2xl border-white/10 p-4 shadow-2xl flex flex-col md:flex-row items-center gap-4">
+                  <select
+                    value={selectedCandidate}
+                    onChange={(e) => setSelectedCandidate(e.target.value)}
+                    className="w-full md:w-64 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50 transition-colors"
+                    disabled={isRecording}
+                  >
+                    <option value="" className="bg-black">Select Candidate</option>
+                    {candidates.map((c) => (
+                      <option key={c.id} value={c.id} className="bg-black">
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex items-center gap-3 w-full md:w-auto">
+                    <Button 
+                      onClick={() => setIsRecording(!isRecording)}
+                      disabled={!selectedCandidate && !isRecording}
+                      variant={isRecording ? "secondary" : "primary"}
+                      className={cn(
+                        "flex-1 md:flex-none h-12 px-8 text-base font-bold",
+                        isRecording ? "bg-red-500/20 border-red-500/40 text-red-100 hover:bg-red-500/30" : "bg-gradient-to-r from-blue-600 to-purple-600"
+                      )}
+                    >
+                      {isRecording ? (
+                        <><Square className="w-4 h-4 mr-2 fill-current" /> Stop</>
+                      ) : (
+                        <><Circle className="w-4 h-4 mr-2 fill-current" /> Start Session</>
+                      )}
+                    </Button>
+                    
+                    {isRecording && (
+                      <Button variant="secondary" size="icon" className="h-12 w-12 rounded-xl">
+                        <Pause className="w-5 h-5" />
+                      </Button>
                     )}
-                  </button>
-
-                  {isRecording && (
-                    <button className="px-4 py-3 rounded-xl bg-white/10 text-white hover:bg-white/20 transition-colors">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Analysis Panel */}
-          <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-            <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              Live AI Analysis
-            </h3>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="p-4 rounded-xl bg-white/5">
-                <p className="text-white/50 text-xs mb-1">Confidence</p>
-                <p className="text-2xl font-bold text-green-400">87%</p>
-              </div>
-              <div className="p-4 rounded-xl bg-white/5">
-                <p className="text-white/50 text-xs mb-1">Engagement</p>
-                <p className="text-2xl font-bold text-blue-400">92%</p>
-              </div>
-              <div className="p-4 rounded-xl bg-white/5">
-                <p className="text-white/50 text-xs mb-1">Clarity</p>
-                <p className="text-2xl font-bold text-purple-400">89%</p>
-              </div>
-              <div className="p-4 rounded-xl bg-white/5">
-                <p className="text-white/50 text-xs mb-1">Sentiment</p>
-                <p className="text-2xl font-bold text-yellow-400">Positive</p>
-              </div>
-            </div>
-
-            {/* Waveform Visualization */}
-            <div className="h-16 rounded-xl bg-white/5 flex items-center justify-center gap-1 overflow-hidden">
-              {[...Array(50)].map((_, i) => (
-                <div
-                  key={i}
-                  className={`w-1 bg-gradient-to-t from-blue-500 to-purple-500 rounded-full transition-all duration-100 ${
-                    isRecording ? "animate-pulse" : ""
-                  }`}
-                  style={{
-                    height: `${Math.random() * 100}%`,
-                    animationDelay: `${i * 50}ms`,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* Real-time Insights */}
-          <div className="rounded-2xl bg-white/[0.02] border border-white/5 overflow-hidden">
-            <div className="p-4 border-b border-white/5">
-              <h3 className="font-semibold">Real-time Insights</h3>
-            </div>
-            <div className="p-4 space-y-3 max-h-[400px] overflow-y-auto">
-              {realtimeInsights.map((insight, i) => (
-                <div
-                  key={i}
-                  className={`p-3 rounded-xl text-sm ${
-                    insight.type === "positive"
-                      ? "bg-green-500/10 border border-green-500/20"
-                      : insight.type === "suggestion"
-                      ? "bg-blue-500/10 border border-blue-500/20"
-                      : "bg-white/5 border border-white/5"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className={`${
-                      insight.type === "positive"
-                        ? "text-green-400"
-                        : insight.type === "suggestion"
-                        ? "text-blue-400"
-                        : "text-white/70"
-                    }`}>
-                      {insight.text}
-                    </p>
-                    <span className="text-white/30 text-xs whitespace-nowrap">{insight.time}</span>
                   </div>
+                </GlassCard>
+              </div>
+            </GlassCard>
+
+            {/* AI Diagnostics Panel */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <GlassCard variant="elevated" className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-blue-400" /> Multimodal Signals
+                  </h3>
+                  <span className="text-xs text-white/30 uppercase tracking-widest font-bold">Latency: 42ms</span>
                 </div>
-              ))}
+                
+                <div className="space-y-5">
+                  {[
+                    { label: "Vocal Confidence", value: 87, color: "bg-green-500" },
+                    { label: "Visual Engagement", value: 92, color: "bg-blue-500" },
+                    { label: "Semantic Relevance", value: 89, color: "bg-purple-500" },
+                  ].map((signal) => (
+                    <div key={signal.label} className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/60 font-medium">{signal.label}</span>
+                        <span className="text-white font-bold">{signal.value}%</span>
+                      </div>
+                      <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: isRecording ? `${signal.value}%` : "0%" }}
+                          className={cn("h-full rounded-full", signal.color)} 
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Animated Waveform */}
+                <div className="h-12 flex items-center gap-1 overflow-hidden px-4">
+                  {[...Array(40)].map((_, i) => (
+                    <motion.div
+                      key={i}
+                      animate={{ 
+                        height: isRecording ? [10, Math.random() * 40 + 10, 10] : 10 
+                      }}
+                      transition={{ 
+                        duration: 0.5, 
+                        repeat: Infinity, 
+                        delay: i * 0.05 
+                      }}
+                      className="flex-1 min-w-[3px] bg-gradient-to-t from-blue-500 to-purple-500 rounded-full opacity-60"
+                    />
+                  ))}
+                </div>
+              </GlassCard>
+
+              <GlassCard variant="accent" className="space-y-6">
+                <div className="flex items-center gap-3">
+                   <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-lg font-bold">AI Suggested Questions</h3>
+                </div>
+                
+                <div className="space-y-3">
+                  {[
+                    "Based on the CV, ask about the 2022 project architecture.",
+                    "Candidate mentioned 'scalability', follow up on load balancing.",
+                    "Explore their experience with team conflict resolution."
+                  ].map((q, i) => (
+                    <motion.button
+                      key={i}
+                      whileHover={{ x: 5 }}
+                      className="w-full p-4 rounded-xl bg-white/5 border border-white/5 text-left text-sm text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center justify-between group"
+                    >
+                      <span className="line-clamp-2">{q}</span>
+                      <ChevronRight className="w-4 h-4 text-white/20 group-hover:text-blue-400 shrink-0 ml-4" />
+                    </motion.button>
+                  ))}
+                </div>
+                
+                <Button variant="outline" className="w-full border-blue-500/20 text-blue-400 hover:bg-blue-500/10">
+                  Generate More Questions
+                </Button>
+              </GlassCard>
             </div>
           </div>
 
-          {/* Suggested Questions */}
-          <div className="rounded-2xl bg-white/[0.02] border border-white/5 overflow-hidden">
-            <div className="p-4 border-b border-white/5">
-              <h3 className="font-semibold">AI-Suggested Questions</h3>
-            </div>
-            <div className="p-4 space-y-3">
-              {[
-                "Can you describe a challenging project you led?",
-                "How do you handle conflicts in a team?",
-                "What's your approach to learning new technologies?",
-              ].map((question, i) => (
-                <button
-                  key={i}
-                  className="w-full p-3 rounded-xl bg-white/5 hover:bg-white/10 text-left text-sm text-white/70 hover:text-white transition-colors"
-                >
-                  {question}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Right Sidebar - Analytics & Notes */}
+          <div className="space-y-8">
+            <GlassCard className="p-0 border-white/5">
+              <div className="p-5 border-b border-white/5 flex items-center justify-between">
+                <h3 className="font-bold text-sm uppercase tracking-widest text-white/50 flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" /> Live Insights
+                </h3>
+              </div>
+              <div className="p-2 space-y-1 max-h-[500px] overflow-y-auto custom-scrollbar">
+                {realtimeInsights.map((insight, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className={cn(
+                      "p-4 rounded-xl mb-2 group cursor-default transition-all",
+                      insight.type === "positive" ? "hover:bg-green-500/5" : "hover:bg-blue-500/5"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <p className={cn(
+                          "text-sm font-medium leading-relaxed",
+                          insight.type === "positive" ? "text-green-400" : insight.type === "suggestion" ? "text-blue-400" : "text-white/80"
+                        )}>
+                          {insight.text}
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-mono text-white/20 whitespace-nowrap mt-1">{insight.time}</span>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </GlassCard>
 
-          {/* Quick Notes */}
-          <div className="rounded-2xl bg-white/[0.02] border border-white/5 overflow-hidden">
-            <div className="p-4 border-b border-white/5">
-              <h3 className="font-semibold">Quick Notes</h3>
-            </div>
-            <div className="p-4">
-              <textarea
-                placeholder="Add notes during the interview..."
-                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 transition-colors resize-none text-sm"
+            <GlassCard className="space-y-4">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-white/50">Quick Notes</h3>
+              <textarea 
+                placeholder="Type your observations..."
+                className="w-full h-40 bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-blue-500/50 transition-colors resize-none placeholder:text-white/20"
               />
-              <button className="mt-3 w-full py-2 rounded-lg bg-blue-500/20 text-blue-400 text-sm font-medium hover:bg-blue-500/30 transition-colors">
-                Save Note
-              </button>
-            </div>
+              <Button className="w-full h-12">Save Assessment</Button>
+            </GlassCard>
+            
+            <GlassCard variant="elevated" className="flex items-center gap-4 p-4 border-white/10 group cursor-pointer hover:bg-white/5">
+              <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20">
+                <Info className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold">Fairness Metrics</h4>
+                <p className="text-xs text-white/40">Real-time bias detection active</p>
+              </div>
+              <CheckCircle2 className="w-5 h-5 text-green-500 ml-auto" />
+            </GlassCard>
           </div>
         </div>
       </div>
