@@ -4,175 +4,232 @@ export type Json =
   | boolean
   | null
   | { [key: string]: Json | undefined }
-  | Json[];
+  | Json[]
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
-      profiles: {
-        Row: {
-          id: string;
-          email: string;
-          name: string;
-          avatar_url: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id: string;
-          email: string;
-          name: string;
-          avatar_url?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          email?: string;
-          name?: string;
-          avatar_url?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-      };
       candidates: {
         Row: {
-          id: string;
-          user_id: string;
-          name: string;
-          email: string;
-          position: string;
-          status: "pending" | "interviewed" | "review" | "hired" | "rejected";
-          score: number | null;
-          notes: string | null;
-          resume_url: string | null;
-          created_at: string;
-          updated_at: string;
-        };
+          avatar_url: string | null
+          created_at: string | null
+          email: string
+          id: string
+          name: string
+          notes: string | null
+          phone: string | null
+          position: string
+          resume_url: string | null
+          score: number | null
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
         Insert: {
-          id?: string;
-          user_id: string;
-          name: string;
-          email: string;
-          position: string;
-          status?: "pending" | "interviewed" | "review" | "hired" | "rejected";
-          score?: number | null;
-          notes?: string | null;
-          resume_url?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
+          avatar_url?: string | null
+          created_at?: string | null
+          email: string
+          id?: string
+          name: string
+          notes?: string | null
+          phone?: string | null
+          position: string
+          resume_url?: string | null
+          score?: number | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
         Update: {
-          id?: string;
-          user_id?: string;
-          name?: string;
-          email?: string;
-          position?: string;
-          status?: "pending" | "interviewed" | "review" | "hired" | "rejected";
-          score?: number | null;
-          notes?: string | null;
-          resume_url?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-      };
-      interviews: {
-        Row: {
-          id: string;
-          user_id: string;
-          candidate_id: string;
-          scheduled_at: string;
-          duration_minutes: number | null;
-          status: "scheduled" | "in_progress" | "completed" | "cancelled";
-          score: number | null;
-          notes: string | null;
-          ai_insights: Json | null;
-          recording_url: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          candidate_id: string;
-          scheduled_at: string;
-          duration_minutes?: number | null;
-          status?: "scheduled" | "in_progress" | "completed" | "cancelled";
-          score?: number | null;
-          notes?: string | null;
-          ai_insights?: Json | null;
-          recording_url?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          candidate_id?: string;
-          scheduled_at?: string;
-          duration_minutes?: number | null;
-          status?: "scheduled" | "in_progress" | "completed" | "cancelled";
-          score?: number | null;
-          notes?: string | null;
-          ai_insights?: Json | null;
-          recording_url?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-      };
+          avatar_url?: string | null
+          created_at?: string | null
+          email?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          position?: string
+          resume_url?: string | null
+          score?: number | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+      }
       feedback: {
         Row: {
-          id: string;
-          interview_id: string;
-          user_id: string;
-          rating: number;
-          strengths: string[] | null;
-          improvements: string[] | null;
-          recommendation: "strong_hire" | "hire" | "no_hire" | "strong_no_hire";
-          comments: string | null;
-          created_at: string;
-        };
+          comments: string | null
+          created_at: string | null
+          id: string
+          improvements: string[] | null
+          interview_id: string
+          rating: number
+          recommendation: string
+          strengths: string[] | null
+          user_id: string
+        }
         Insert: {
-          id?: string;
-          interview_id: string;
-          user_id: string;
-          rating: number;
-          strengths?: string[] | null;
-          improvements?: string[] | null;
-          recommendation: "strong_hire" | "hire" | "no_hire" | "strong_no_hire";
-          comments?: string | null;
-          created_at?: string;
-        };
+          comments?: string | null
+          created_at?: string | null
+          id?: string
+          improvements?: string[] | null
+          interview_id: string
+          rating: number
+          recommendation: string
+          strengths?: string[] | null
+          user_id: string
+        }
         Update: {
-          id?: string;
-          interview_id?: string;
-          user_id?: string;
-          rating?: number;
-          strengths?: string[] | null;
-          improvements?: string[] | null;
-          recommendation?: "strong_hire" | "hire" | "no_hire" | "strong_no_hire";
-          comments?: string | null;
-          created_at?: string;
-        };
-      };
-    };
+          comments?: string | null
+          created_at?: string | null
+          id?: string
+          improvements?: string[] | null
+          interview_id?: string
+          rating?: number
+          recommendation?: string
+          strengths?: string[] | null
+          user_id?: string
+        }
+      }
+      interview_questions: {
+        Row: {
+          ai_evaluation: Json | null
+          answer: string | null
+          answered_at: string | null
+          asked_at: string | null
+          created_at: string | null
+          id: string
+          interview_id: string
+          question: string
+          score: number | null
+        }
+        Insert: {
+          ai_evaluation?: Json | null
+          answer?: string | null
+          answered_at?: string | null
+          asked_at?: string | null
+          created_at?: string | null
+          id?: string
+          interview_id: string
+          question: string
+          score?: number | null
+        }
+        Update: {
+          ai_evaluation?: Json | null
+          answer?: string | null
+          answered_at?: string | null
+          asked_at?: string | null
+          created_at?: string | null
+          id?: string
+          interview_id?: string
+          question?: string
+          score?: number | null
+        }
+      }
+      interviews: {
+        Row: {
+          ai_insights: Json | null
+          candidate_id: string
+          created_at: string | null
+          duration_minutes: number | null
+          id: string
+          notes: string | null
+          recording_url: string | null
+          scheduled_at: string
+          score: number | null
+          status: string
+          title: string
+          transcript: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          ai_insights?: Json | null
+          candidate_id: string
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          notes?: string | null
+          recording_url?: string | null
+          scheduled_at: string
+          score?: number | null
+          status?: string
+          title: string
+          transcript?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          ai_insights?: Json | null
+          candidate_id?: string
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          notes?: string | null
+          recording_url?: string | null
+          scheduled_at?: string
+          score?: number | null
+          status?: string
+          title?: string
+          transcript?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          email: string
+          id: string
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string | null
+          email: string
+          id: string
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string | null
+          email?: string
+          id?: string
+          name?: string
+          updated_at?: string | null
+        }
+      }
+    }
     Views: {
-      [_ in never]: never;
-    };
+      [_ in never]: never
+    }
     Functions: {
-      [_ in never]: never;
-    };
+      [_ in never]: never
+    }
     Enums: {
-      candidate_status: "pending" | "interviewed" | "review" | "hired" | "rejected";
-      interview_status: "scheduled" | "in_progress" | "completed" | "cancelled";
-      recommendation_type: "strong_hire" | "hire" | "no_hire" | "strong_no_hire";
-    };
-  };
+      [_ in never]: never
+    }
+  }
 }
 
 export type Tables<T extends keyof Database["public"]["Tables"]> =
-  Database["public"]["Tables"][T]["Row"];
+  Database["public"]["Tables"][T]["Row"]
 export type InsertTables<T extends keyof Database["public"]["Tables"]> =
-  Database["public"]["Tables"][T]["Insert"];
+  Database["public"]["Tables"][T]["Insert"]
 export type UpdateTables<T extends keyof Database["public"]["Tables"]> =
-  Database["public"]["Tables"][T]["Update"];
+  Database["public"]["Tables"][T]["Update"]
+
+// Convenience types
+export type Candidate = Tables<"candidates">
+export type Interview = Tables<"interviews">
+export type Feedback = Tables<"feedback">
+export type InterviewQuestion = Tables<"interview_questions">
+export type Profile = Tables<"profiles">
+
+// Interview with candidate info
+export type InterviewWithCandidate = Interview & {
+  candidate: Candidate
+}
