@@ -2,15 +2,21 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, User, Mail, Phone, Briefcase, FileText, ChevronDown, Check, Search } from "lucide-react";
+import { X, User, Mail, Phone, Briefcase, FileText, ChevronDown, Check, Search, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { createCandidate } from "@/lib/actions/candidates";
 import { cn } from "@/lib/utils";
+import { jobTitles, jobLevels } from "@/lib/constants/job-titles";
 
 interface AddCandidateModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+}
+
+interface SelectedPosition {
+  title: string;
+  level: string;
 }
 
 const countryCodes = [
@@ -70,7 +76,6 @@ export function AddCandidateModal({ isOpen, onClose, onSuccess }: AddCandidateMo
     name: "",
     email: "",
     phone: "",
-    position: "",
     notes: "",
   });
 
@@ -80,10 +85,27 @@ export function AddCandidateModal({ isOpen, onClose, onSuccess }: AddCandidateMo
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Positions state
+  const [selectedPositions, setSelectedPositions] = useState<SelectedPosition[]>([]);
+  const [currentLevel, setCurrentLevel] = useState("Mid-Level");
+  const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
+  const levelDropdownRef = useRef<HTMLDivElement>(null);
+
+  const [isPositionDropdownOpen, setIsPositionDropdownOpen] = useState(false);
+  const [positionSearchTerm, setPositionSearchTerm] = useState("");
+  const positionDropdownRef = useRef<HTMLDivElement>(null);
+  const positionInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsDropdownOpen(false);
+      }
+      if (positionDropdownRef.current && !positionDropdownRef.current.contains(event.target as Node)) {
+        setIsPositionDropdownOpen(false);
+      }
+      if (levelDropdownRef.current && !levelDropdownRef.current.contains(event.target as Node)) {
+        setIsLevelDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -105,22 +127,54 @@ export function AddCandidateModal({ isOpen, onClose, onSuccess }: AddCandidateMo
     c.country.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const filteredPositions = jobTitles.filter(title => 
+    title.toLowerCase().includes(positionSearchTerm.toLowerCase())
+  );
+
+  const addPosition = (title: string) => {
+    const alreadyExists = selectedPositions.some(p => p.title === title && p.level === currentLevel);
+    if (!alreadyExists) {
+      setSelectedPositions([...selectedPositions, { title, level: currentLevel }]);
+    }
+    setPositionSearchTerm("");
+    setIsPositionDropdownOpen(false);
+  };
+
+  const removePosition = (index: number) => {
+    setSelectedPositions(selectedPositions.filter((_, i) => i !== index));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    
+    if (selectedPositions.length === 0 && !positionSearchTerm) {
+      setError("Please add at least one position");
+      return;
+    }
+
     setLoading(true);
 
     const fullPhone = formData.phone ? `${selectedCountry.code} ${formData.phone}` : null;
+    
+    // Combine selected positions into a single string for the database
+    const positionsList = selectedPositions.map(p => `${p.level} ${p.title}`);
+    if (positionSearchTerm && !selectedPositions.some(p => p.title === positionSearchTerm)) {
+      positionsList.push(`${currentLevel} ${positionSearchTerm}`);
+    }
+    const finalPositionString = positionsList.join(", ");
 
     try {
       await createCandidate({
         name: formData.name,
         email: formData.email,
         phone: fullPhone,
-        position: formData.position,
+        position: finalPositionString,
         notes: formData.notes || null,
       });
-      setFormData({ name: "", email: "", phone: "", position: "", notes: "" });
+      setFormData({ name: "", email: "", phone: "", notes: "" });
+      setSelectedPositions([]);
+      setPositionSearchTerm("");
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add candidate");
@@ -300,21 +354,133 @@ export function AddCandidateModal({ isOpen, onClose, onSuccess }: AddCandidateMo
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">
-                  Position *
+              {/* Positions Multi-Select */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-white/70">
+                  Target Positions & Levels *
                 </label>
-                <div className="relative">
-                  <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
-                  <input
-                    type="text"
-                    name="position"
-                    value={formData.position}
-                    onChange={handleChange}
-                    required
-                    className="w-full pl-11 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50"
-                    placeholder="Senior Developer"
-                  />
+                
+                {/* Selected Tags */}
+                <div className="flex flex-wrap gap-2">
+                  {selectedPositions.map((pos, idx) => (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      key={`${pos.level}-${pos.title}`}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-bold"
+                    >
+                      <span>{pos.level}</span>
+                      <span className="w-1 h-1 rounded-full bg-blue-400/50" />
+                      <span>{pos.title}</span>
+                      <button
+                        type="button"
+                        onClick={() => removePosition(idx)}
+                        className="p-0.5 hover:bg-blue-500/20 rounded-full transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </motion.div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  {/* Level Selector */}
+                  <div className="relative" ref={levelDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsLevelDropdownOpen(!isLevelDropdownOpen)}
+                      className="h-[52px] px-4 rounded-xl bg-white/5 border border-white/10 text-white text-sm font-medium flex items-center gap-2 hover:bg-white/10 transition-colors whitespace-nowrap"
+                    >
+                      {currentLevel}
+                      <ChevronDown className={cn("w-4 h-4 text-white/30 transition-transform", isLevelDropdownOpen && "rotate-180")} />
+                    </button>
+                    
+                    <AnimatePresence>
+                      {isLevelDropdownOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          className="absolute left-0 top-full mt-2 w-48 max-h-60 overflow-y-auto bg-gray-900 border border-white/10 rounded-xl shadow-2xl z-[60] custom-scrollbar"
+                        >
+                          {jobLevels.map((level) => (
+                            <button
+                              key={level}
+                              type="button"
+                              onClick={() => {
+                                setCurrentLevel(level);
+                                setIsLevelDropdownOpen(false);
+                              }}
+                              className="w-full px-4 py-3 text-left hover:bg-white/5 transition-colors text-sm text-white/70 hover:text-white flex items-center justify-between"
+                            >
+                              {level}
+                              {currentLevel === level && <Check className="w-4 h-4 text-blue-500" />}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Position Search */}
+                  <div className="relative flex-1" ref={positionDropdownRef}>
+                    <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+                    <input
+                      ref={positionInputRef}
+                      type="text"
+                      value={positionSearchTerm}
+                      onChange={(e) => {
+                        setPositionSearchTerm(e.target.value);
+                        setIsPositionDropdownOpen(true);
+                      }}
+                      onFocus={() => setIsPositionDropdownOpen(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && positionSearchTerm) {
+                          e.preventDefault();
+                          addPosition(positionSearchTerm);
+                        }
+                      }}
+                      className="w-full pl-11 pr-12 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50"
+                      placeholder="Search or type position..."
+                    />
+                    {positionSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => addPosition(positionSearchTerm)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                        title="Add position"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    <AnimatePresence>
+                      {isPositionDropdownOpen && positionSearchTerm.length > 0 && filteredPositions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          className="absolute left-0 right-0 top-full mt-2 max-h-60 overflow-y-auto bg-gray-900 border border-white/10 rounded-xl shadow-2xl z-[60] custom-scrollbar"
+                        >
+                          {filteredPositions.map((title) => (
+                            <button
+                              key={title}
+                              type="button"
+                              onClick={() => addPosition(title)}
+                              className="w-full px-4 py-3 text-left hover:bg-white/5 transition-colors text-sm text-white/80 hover:text-white"
+                            >
+                              <span dangerouslySetInnerHTML={{
+                                __html: title.replace(
+                                  new RegExp(`(${positionSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'),
+                                  '<span class="text-blue-400 font-bold">$1</span>'
+                                )
+                              }} />
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
               </div>
 
