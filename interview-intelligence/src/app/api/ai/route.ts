@@ -1,5 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import {
+  parseUserIntent,
+  getPositionLevel,
+  generateSystemPrompt,
+  generateCommandResponse,
+  createConversationState,
+  type ConversationState,
+  type UserIntent,
+} from "@/lib/ai/conversationEngine";
+import {
+  generatePositiveFeedback,
+  generateGreeting,
+  generateClosing,
+  generateEncouragementForStuck,
+} from "@/lib/ai/positiveResponses";
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -30,6 +45,8 @@ export async function POST(request: NextRequest) {
         return await chat(params);
       case "generateFeedback":
         return await generateFeedback(params);
+      case "conductInterview":
+        return await conductInterview(params);
       default:
         return NextResponse.json(
           { error: "Invalid action" },
@@ -313,4 +330,216 @@ Provide feedback as JSON with:
   const feedback = JSON.parse(content || "{}");
 
   return NextResponse.json(feedback);
+}
+
+// Smart conversational interview conductor
+async function conductInterview(params: {
+  type: "start" | "respond" | "command" | "end";
+  candidateName: string;
+  position: string;
+  currentQuestion?: string;
+  currentQuestionIndex?: number;
+  totalQuestions?: number;
+  candidateResponse?: string;
+  conversationHistory?: { role: "ai" | "candidate"; content: string }[];
+  questionsAnswered?: number;
+  averageScore?: number;
+  previousQuestion?: string;
+  lastScore?: number;
+}) {
+  const {
+    type,
+    candidateName,
+    position,
+    currentQuestion = "",
+    currentQuestionIndex = 0,
+    totalQuestions = 10,
+    candidateResponse = "",
+    conversationHistory = [],
+    questionsAnswered = 0,
+    averageScore = 0,
+    previousQuestion = "",
+    lastScore,
+  } = params;
+
+  const positionLevel = getPositionLevel(position);
+
+  // Handle different interaction types
+  switch (type) {
+    case "start": {
+      // Generate welcome greeting
+      const greeting = generateGreeting(candidateName, position, positionLevel, totalQuestions);
+      return NextResponse.json({
+        response: greeting,
+        intent: "greeting",
+        shouldProceed: true,
+        nextAction: "ask_question",
+      });
+    }
+
+    case "command": {
+      // Parse user intent for commands
+      const intent = parseUserIntent(candidateResponse);
+
+      if (intent === "answer" || intent === "unknown") {
+        // Not a command, treat as answer
+        return NextResponse.json({
+          response: null,
+          intent: "answer",
+          shouldProceed: true,
+          nextAction: "evaluate_answer",
+        });
+      }
+
+      // Handle command
+      const commandResponse = generateCommandResponse(
+        intent,
+        currentQuestion,
+        previousQuestion,
+        candidateName
+      );
+
+      return NextResponse.json({
+        response: commandResponse,
+        intent,
+        shouldProceed: intent === "skip",
+        nextAction: intent === "skip" ? "next_question" : intent === "go_back" ? "previous_question" : "repeat_question",
+      });
+    }
+
+    case "respond": {
+      // Generate contextual AI response after evaluating answer
+      const state = createConversationState(candidateName, position, totalQuestions);
+      state.currentQuestionIndex = currentQuestionIndex;
+      state.questionsAnswered = questionsAnswered;
+      state.averageScore = averageScore;
+
+      // Add conversation history to state
+      conversationHistory.forEach((msg) => {
+        state.messages.push({
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(),
+        });
+      });
+
+      const systemPrompt = generateSystemPrompt(state);
+
+      // Check if candidate seems stuck (very short or unclear response)
+      if (candidateResponse.trim().length < 15) {
+        const encouragement = generateEncouragementForStuck(positionLevel);
+        return NextResponse.json({
+          response: encouragement,
+          intent: "stuck",
+          shouldProceed: false,
+          nextAction: "wait_for_answer",
+        });
+      }
+
+      // Generate positive feedback based on score
+      if (lastScore !== undefined) {
+        const feedback = generatePositiveFeedback(
+          lastScore,
+          positionLevel,
+          questionsAnswered,
+          totalQuestions
+        );
+
+        return NextResponse.json({
+          response: feedback,
+          intent: "feedback",
+          shouldProceed: true,
+          nextAction: questionsAnswered >= totalQuestions ? "end_interview" : "next_question",
+        });
+      }
+
+      // Generate contextual response using AI
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          ...conversationHistory.map((msg) => ({
+            role: msg.role === "ai" ? ("assistant" as const) : ("user" as const),
+            content: msg.content,
+          })),
+          {
+            role: "user",
+            content: `The candidate just said: "${candidateResponse}"\n\nRespond naturally and appropriately. If they answered the question, provide brief positive feedback. If they seem confused or are asking for clarification, help them. Keep your response to 1-3 sentences.`,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 200,
+      });
+
+      const aiResponse = completion.choices[0].message.content || "";
+
+      return NextResponse.json({
+        response: aiResponse,
+        intent: "contextual_response",
+        shouldProceed: true,
+        nextAction: "evaluate_or_continue",
+      });
+    }
+
+    case "end": {
+      // Generate closing message
+      const closing = generateClosing(candidateName, positionLevel, averageScore);
+      return NextResponse.json({
+        response: closing,
+        intent: "closing",
+        shouldProceed: false,
+        nextAction: "show_results",
+      });
+    }
+
+    default:
+      return NextResponse.json({
+        response: "I'm not sure how to respond to that. Let's continue with the interview.",
+        intent: "unknown",
+        shouldProceed: true,
+        nextAction: "continue",
+      });
+  }
+}
+
+// Generate follow-up question based on answer quality
+async function generateFollowUp(params: {
+  question: string;
+  answer: string;
+  score: number;
+  position: string;
+}) {
+  const { question, answer, score, position } = params;
+  const positionLevel = getPositionLevel(position);
+
+  // Only generate follow-ups for mid-range scores where more clarity might help
+  if (score >= 85 || score < 40) {
+    return NextResponse.json({ followUp: null });
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are a ${positionLevel === "senior" || positionLevel === "manager" ? "technical" : "friendly"} interviewer helping candidates elaborate on their answers. Generate a brief, encouraging follow-up question that helps them provide more detail.`,
+      },
+      {
+        role: "user",
+        content: `Original question: "${question}"
+Candidate's answer: "${answer}"
+
+Generate a short follow-up question (1 sentence) that encourages them to elaborate on a specific aspect of their answer. Be warm and encouraging.`,
+      },
+    ],
+    temperature: 0.7,
+    max_tokens: 100,
+  });
+
+  return NextResponse.json({
+    followUp: completion.choices[0].message.content,
+  });
 }

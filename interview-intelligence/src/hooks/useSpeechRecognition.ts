@@ -130,60 +130,298 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
   };
 }
 
-// Text-to-Speech hook
-export function useTextToSpeech() {
+// Enhanced Text-to-Speech hook with emotion and queue support
+export type SpeechEmotion = "neutral" | "excited" | "calm" | "questioning" | "encouraging";
+
+interface SpeechQueueItem {
+  text: string;
+  emotion?: SpeechEmotion;
+  rate?: number;
+  pitch?: number;
+  onStart?: () => void;
+  onEnd?: () => void;
+}
+
+interface UseTextToSpeechOptions {
+  defaultRate?: number;
+  defaultPitch?: number;
+  defaultVolume?: number;
+  preferredVoices?: string[];
+}
+
+export function useTextToSpeech(options: UseTextToSpeechOptions = {}) {
+  const {
+    defaultRate = 1,
+    defaultPitch = 1,
+    defaultVolume = 1,
+    preferredVoices = ["Google US English", "Microsoft Zira", "Samantha", "Alex"],
+  } = options;
+
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
+  const [currentRate, setCurrentRate] = useState(defaultRate);
+
+  const queueRef = useRef<SpeechQueueItem[]>([]);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
-    setIsSupported("speechSynthesis" in window);
+    const supported = "speechSynthesis" in window;
+    setIsSupported(supported);
+
+    if (supported) {
+      // Load voices
+      const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        setAvailableVoices(voices);
+
+        // Select best voice
+        if (voices.length > 0 && !selectedVoice) {
+          // Try to find a preferred voice
+          let bestVoice = voices.find(v =>
+            preferredVoices.some(pv => v.name.includes(pv))
+          );
+
+          // Fallback to first English voice
+          if (!bestVoice) {
+            bestVoice = voices.find(v => v.lang.startsWith("en"));
+          }
+
+          // Fallback to first voice
+          if (!bestVoice) {
+            bestVoice = voices[0];
+          }
+
+          setSelectedVoice(bestVoice);
+        }
+      };
+
+      loadVoices();
+
+      // Chrome loads voices asynchronously
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, [preferredVoices, selectedVoice]);
+
+  // Get emotion-based speech parameters
+  const getEmotionParams = useCallback((emotion: SpeechEmotion) => {
+    switch (emotion) {
+      case "excited":
+        return { rate: 1.15, pitch: 1.15 };
+      case "calm":
+        return { rate: 0.9, pitch: 0.95 };
+      case "questioning":
+        return { rate: 0.95, pitch: 1.1 };
+      case "encouraging":
+        return { rate: 1.05, pitch: 1.1 };
+      default:
+        return { rate: 1, pitch: 1 };
+    }
   }, []);
 
-  const speak = useCallback((text: string, options?: {
-    rate?: number;
-    pitch?: number;
-    volume?: number;
-    voice?: string;
-  }) => {
+  // Process queue
+  const processQueue = useCallback(() => {
+    if (queueRef.current.length === 0 || isSpeaking) {
+      return;
+    }
+
+    const item = queueRef.current.shift();
+    if (!item) return;
+
+    const emotionParams = getEmotionParams(item.emotion || "neutral");
+
+    const utterance = new SpeechSynthesisUtterance(item.text);
+    utterance.rate = item.rate ?? emotionParams.rate * currentRate;
+    utterance.pitch = item.pitch ?? emotionParams.pitch * defaultPitch;
+    utterance.volume = defaultVolume;
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      item.onStart?.();
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      item.onEnd?.();
+      // Process next item in queue
+      processQueue();
+    };
+
+    utterance.onerror = (event) => {
+      console.error("Speech synthesis error:", event);
+      setIsSpeaking(false);
+      processQueue();
+    };
+
+    utteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  }, [isSpeaking, currentRate, defaultPitch, defaultVolume, selectedVoice, getEmotionParams]);
+
+  const speak = useCallback((
+    text: string,
+    options?: {
+      rate?: number;
+      pitch?: number;
+      volume?: number;
+      voice?: string;
+      emotion?: SpeechEmotion;
+      onStart?: () => void;
+      onEnd?: () => void;
+    }
+  ) => {
     if (!isSupported) return;
 
     // Cancel any ongoing speech
     window.speechSynthesis.cancel();
+    queueRef.current = [];
+
+    const emotionParams = getEmotionParams(options?.emotion || "neutral");
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = options?.rate || 1;
-    utterance.pitch = options?.pitch || 1;
-    utterance.volume = options?.volume || 1;
+    utterance.rate = options?.rate ?? emotionParams.rate * currentRate;
+    utterance.pitch = options?.pitch ?? emotionParams.pitch * defaultPitch;
+    utterance.volume = options?.volume ?? defaultVolume;
 
     // Get available voices and select a good one
     const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v =>
-      v.name.includes("Google") || v.name.includes("Microsoft") || v.lang.startsWith("en")
-    );
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
+
+    // Try to find preferred voice
+    let voice = selectedVoice;
+    if (options?.voice) {
+      voice = voices.find(v => v.name.includes(options.voice!)) || selectedVoice;
     }
 
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    if (voice) {
+      utterance.voice = voice;
+    }
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      options?.onStart?.();
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      options?.onEnd?.();
+    };
+
+    utterance.onerror = (event) => {
+      console.error("Speech synthesis error:", event);
+      setIsSpeaking(false);
+    };
 
     utteranceRef.current = utterance;
     window.speechSynthesis.speak(utterance);
-  }, [isSupported]);
+  }, [isSupported, currentRate, defaultPitch, defaultVolume, selectedVoice, getEmotionParams]);
+
+  const queueSpeak = useCallback((item: SpeechQueueItem) => {
+    queueRef.current.push(item);
+    if (!isSpeaking) {
+      processQueue();
+    }
+  }, [isSpeaking, processQueue]);
 
   const stop = useCallback(() => {
     if (isSupported) {
       window.speechSynthesis.cancel();
+      queueRef.current = [];
       setIsSpeaking(false);
+      setIsPaused(false);
     }
   }, [isSupported]);
 
+  const pause = useCallback(() => {
+    if (isSupported && isSpeaking) {
+      window.speechSynthesis.pause();
+      setIsPaused(true);
+    }
+  }, [isSupported, isSpeaking]);
+
+  const resume = useCallback(() => {
+    if (isSupported && isPaused) {
+      window.speechSynthesis.resume();
+      setIsPaused(false);
+    }
+  }, [isSupported, isPaused]);
+
+  const setRate = useCallback((rate: number) => {
+    setCurrentRate(Math.max(0.5, Math.min(2, rate)));
+  }, []);
+
+  const selectVoice = useCallback((voiceName: string) => {
+    const voice = availableVoices.find(v => v.name === voiceName);
+    if (voice) {
+      setSelectedVoice(voice);
+    }
+  }, [availableVoices]);
+
   return {
     isSpeaking,
+    isPaused,
     isSupported,
+    availableVoices,
+    selectedVoice,
+    currentRate,
     speak,
+    queueSpeak,
     stop,
+    pause,
+    resume,
+    setRate,
+    selectVoice,
+  };
+}
+
+// Hook for combined speech input/output
+export function useSpeechInteraction(options?: {
+  onTranscript?: (text: string) => void;
+  onSpeakStart?: () => void;
+  onSpeakEnd?: () => void;
+}) {
+  const recognition = useSpeechRecognition();
+  const tts = useTextToSpeech();
+
+  // Pause listening while speaking
+  useEffect(() => {
+    if (tts.isSpeaking && recognition.isListening) {
+      recognition.stopListening();
+    }
+  }, [tts.isSpeaking, recognition.isListening]);
+
+  // Callback when transcript changes
+  useEffect(() => {
+    if (recognition.transcript) {
+      options?.onTranscript?.(recognition.transcript);
+    }
+  }, [recognition.transcript, options]);
+
+  const speakAndListen = useCallback(async (text: string, emotion?: SpeechEmotion) => {
+    return new Promise<void>((resolve) => {
+      tts.speak(text, {
+        emotion,
+        onStart: options?.onSpeakStart,
+        onEnd: () => {
+          options?.onSpeakEnd?.();
+          // Start listening after speaking
+          setTimeout(() => {
+            recognition.resetTranscript();
+            recognition.startListening();
+            resolve();
+          }, 300);
+        },
+      });
+    });
+  }, [tts, recognition, options]);
+
+  return {
+    ...recognition,
+    ...tts,
+    speakAndListen,
   };
 }
