@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -45,19 +45,61 @@ import { getInterview, updateInterview, completeInterview } from "@/lib/actions/
 import { getInterviewQuestions, initializeInterviewQuestions, answerQuestion } from "@/lib/actions/questions";
 import { useSpeechRecognition, useTextToSpeech } from "@/hooks/useSpeechRecognition";
 import { AIAvatar, AIAvatarCompact, type AIState } from "@/components/interview/AIAvatar";
-import { ConversationControls, MediaControls, ProgressIndicator } from "@/components/interview/ConversationControls";
-import { ParticipantPanel, ObserverBadge } from "@/components/interview/ParticipantPanel";
-import { parseUserIntent } from "@/lib/ai/conversationEngine";
+import { MediaControls, ProgressIndicator } from "@/components/interview/ConversationControls";
+import { ParticipantPanel } from "@/components/interview/ParticipantPanel";
 import { cn } from "@/lib/utils";
 import type { InterviewWithCandidate, InterviewQuestion } from "@/lib/supabase/types";
 
 type Stage = "setup" | "interview" | "completed";
 type InterviewPhase = "speaking" | "listening" | "confirming" | "evaluating";
 
-interface ConversationMessage {
-  role: "ai" | "candidate";
-  content: string;
-  timestamp: Date;
+// Voice command patterns - check these against what user says
+const COMMAND_PATTERNS = {
+  repeat: [
+    /repeat/i,
+    /say.*again/i,
+    /what was the question/i,
+    /can you repeat/i,
+    /didn't hear/i,
+    /didn't catch/i,
+    /one more time/i,
+    /pardon/i,
+    /sorry.*what/i,
+  ],
+  skip: [
+    /skip/i,
+    /next question/i,
+    /move on/i,
+    /pass/i,
+    /don't know/i,
+  ],
+  goBack: [
+    /go back/i,
+    /previous question/i,
+    /last question/i,
+  ],
+  clarify: [
+    /don't understand/i,
+    /what do you mean/i,
+    /clarify/i,
+    /explain/i,
+    /confused/i,
+  ],
+};
+
+function detectVoiceCommand(text: string): "repeat" | "skip" | "goBack" | "clarify" | null {
+  const cleanText = text.toLowerCase().trim();
+
+  // Check each command type
+  for (const [command, patterns] of Object.entries(COMMAND_PATTERNS)) {
+    for (const pattern of patterns) {
+      if (pattern.test(cleanText)) {
+        return command as "repeat" | "skip" | "goBack" | "clarify";
+      }
+    }
+  }
+
+  return null;
 }
 
 export default function InterviewSessionPage() {
@@ -95,8 +137,9 @@ export default function InterviewSessionPage() {
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   const [aiSpeechEnabled, setAiSpeechEnabled] = useState(true);
   const [currentEmotion, setCurrentEmotion] = useState("focused");
-  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
   const [liveTranscript, setLiveTranscript] = useState("");
+  const [isProcessingCommand, setIsProcessingCommand] = useState(false);
+  const [lastProcessedCommand, setLastProcessedCommand] = useState("");
 
   // Metrics
   const [metrics, setMetrics] = useState({
@@ -117,6 +160,12 @@ export default function InterviewSessionPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const emotionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const commandCooldownRef = useRef<boolean>(false);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTranscriptRef = useRef<string>("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
 
   // Speech hooks
   const {
@@ -132,27 +181,97 @@ export default function InterviewSessionPage() {
 
   const { isSpeaking, speak, stop: stopSpeaking, isSupported: ttsSupported } = useTextToSpeech();
 
-  // Update AI state based on current activity
+  // Memoize the full transcript to prevent unnecessary re-renders
+  const fullTranscript = useMemo(() => {
+    return (transcript + " " + interimTranscript).trim();
+  }, [transcript, interimTranscript]);
+
+  // Update AI state - simplified to prevent loops
   useEffect(() => {
-    if (isSpeaking) {
-      setAiState("speaking");
-    } else if (isListening) {
-      setAiState("listening");
-    } else if (isEvaluating) {
-      setAiState("thinking");
-    } else {
-      setAiState("idle");
-    }
+    let newState: AIState = "idle";
+    if (isSpeaking) newState = "speaking";
+    else if (isListening && !isSpeaking) newState = "listening";
+    else if (isEvaluating) newState = "thinking";
+
+    setAiState(newState);
   }, [isSpeaking, isListening, isEvaluating]);
 
-  // Update answer from transcript
+  // Update transcript display and detect silence for auto-finish
   useEffect(() => {
-    if (transcript || interimTranscript) {
-      const fullTranscript = transcript + interimTranscript;
-      setCurrentAnswer(fullTranscript);
+    if (fullTranscript) {
       setLiveTranscript(fullTranscript);
+      setCurrentAnswer(fullTranscript);
+
+      // Reset silence timer when new speech is detected
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+
+      // Store current transcript to compare
+      lastTranscriptRef.current = fullTranscript;
+
+      // Only set auto-finish timer if we're listening and have substantial content
+      if (interviewPhase === "listening" && fullTranscript.trim().length > 20) {
+        silenceTimerRef.current = setTimeout(() => {
+          // Check if transcript hasn't changed (user stopped speaking)
+          if (lastTranscriptRef.current === fullTranscript && interviewPhase === "listening") {
+            // Check it's not a command
+            const command = detectVoiceCommand(fullTranscript);
+            if (!command) {
+              console.log("Auto-finishing after silence detected");
+              handleAutoFinish();
+            }
+          }
+        }, 3000); // 3 seconds of silence triggers auto-finish
+      }
     }
-  }, [transcript, interimTranscript]);
+
+    return () => {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+    };
+  }, [fullTranscript, interviewPhase]);
+
+  // SMART VOICE COMMAND DETECTION - Check for commands in real-time
+  useEffect(() => {
+    if (!fullTranscript || isProcessingCommand || commandCooldownRef.current || interviewPhase !== "listening") {
+      return;
+    }
+
+    const command = detectVoiceCommand(fullTranscript);
+
+    if (command && fullTranscript !== lastProcessedCommand) {
+      // Prevent duplicate processing
+      commandCooldownRef.current = true;
+      setIsProcessingCommand(true);
+      setLastProcessedCommand(fullTranscript);
+
+      console.log("Voice command detected:", command, "from:", fullTranscript);
+
+      // Execute the command
+      switch (command) {
+        case "repeat":
+          handleRepeatQuestion();
+          break;
+        case "skip":
+          handleSkipQuestion();
+          break;
+        case "goBack":
+          handleGoBack();
+          break;
+        case "clarify":
+          handleClarifyQuestion();
+          break;
+      }
+
+      // Reset cooldown after 3 seconds
+      setTimeout(() => {
+        commandCooldownRef.current = false;
+        setIsProcessingCommand(false);
+      }, 3000);
+    }
+  }, [fullTranscript, isProcessingCommand, interviewPhase, lastProcessedCommand]);
 
   // Load interview data
   useEffect(() => {
@@ -259,19 +378,69 @@ export default function InterviewSessionPage() {
     }
   };
 
-  const speakText = useCallback((text: string) => {
-    if (aiSpeechEnabled && ttsSupported) {
-      setAiState("speaking");
-      speak(text);
-    }
-  }, [aiSpeechEnabled, ttsSupported, speak]);
+  const startRecording = useCallback(() => {
+    if (!streamRef.current) return;
 
-  const addToConversation = useCallback((role: "ai" | "candidate", content: string) => {
-    setConversationHistory(prev => [...prev, {
-      role,
-      content,
-      timestamp: new Date(),
-    }]);
+    try {
+      recordedChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(streamRef.current, {
+        mimeType: 'video/webm;codecs=vp9'
+      });
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `interview-${interviewId}-${new Date().toISOString().split('T')[0]}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      mediaRecorder.start(1000); // Collect data every second
+      mediaRecorderRef.current = mediaRecorder;
+      setIsRecording(true);
+      addInsight("Recording started");
+    } catch (error) {
+      console.error("Failed to start recording:", error);
+    }
+  }, [interviewId, addInsight]);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+      addInsight("Recording saved");
+    }
+  }, [addInsight]);
+
+  const speakText = useCallback((text: string, onDone?: () => void) => {
+    if (aiSpeechEnabled && ttsSupported) {
+      // Stop listening while AI speaks
+      if (isListening) {
+        stopListening();
+      }
+
+      speak(text, {
+        onEnd: onDone
+      });
+    } else if (onDone) {
+      // If speech disabled, call callback immediately
+      setTimeout(onDone, 1000);
+    }
+  }, [aiSpeechEnabled, ttsSupported, speak, isListening, stopListening]);
+
+  const addInsight = useCallback((message: string) => {
+    setAiInsights(prev => [message, ...prev].slice(0, 8));
   }, []);
 
   const startInterview = async () => {
@@ -294,168 +463,146 @@ export default function InterviewSessionPage() {
     setStage("interview");
     await updateInterview(interviewId, { status: "in_progress" });
 
-    // Use smart AI greeting
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "conductInterview",
-          type: "start",
-          candidateName: interview?.candidate?.name || "Candidate",
-          position: interview?.candidate?.position || "Position",
-          totalQuestions: questions.length,
-        }),
-      });
+    // Greeting - Using female voice "Sarah"
+    const greeting = `Hello ${interview?.candidate?.name || ""}! Welcome to your interview for the ${interview?.candidate?.position || "position"} role. I'm Sarah, your AI interviewer. I'll be asking you ${questions.length} questions today. Take your time with each answer. Your answer will be automatically submitted after a few seconds of silence. You can also say "repeat the question" anytime. Ready? Let's begin!`;
 
-      if (response.ok) {
-        const data = await response.json();
-        const greeting = data.response;
-        setAiInsights(prev => [greeting, ...prev].slice(0, 5));
-        addToConversation("ai", greeting);
-        speakText(greeting);
-      }
-    } catch (error) {
-      // Fallback greeting
-      const greeting = `Hello! Welcome to your interview for the ${interview?.candidate?.position || "position"}. I'll be asking you ${questions.length} questions today. Let's begin!`;
-      setAiInsights(prev => [greeting, ...prev].slice(0, 5));
-      addToConversation("ai", greeting);
-      speakText(greeting);
-    }
+    addInsight("Interview started");
 
-    // Wait for greeting then ask question
-    setTimeout(() => {
-      askCurrentQuestion();
-    }, 5000);
+    speakText(greeting, () => {
+      // After greeting, ask first question (index 0)
+      setTimeout(() => askQuestion(0), 1000);
+    });
 
     setIsStarting(false);
   };
 
-  const askCurrentQuestion = () => {
-    if (questions[currentQuestionIndex]) {
+  // Ask question by explicit index to avoid state sync issues
+  const askQuestion = useCallback((index: number) => {
+    if (questions[index]) {
       setInterviewPhase("speaking");
-      setAiState("speaking");
-      const questionText = questions[currentQuestionIndex].question;
-      addToConversation("ai", questionText);
-      speakText(questionText);
+      resetTranscript();
+      setCurrentAnswer("");
+      setLiveTranscript("");
+      setLastProcessedCommand("");
 
-      // After speaking, start listening
-      setTimeout(() => {
+      const questionNum = index + 1;
+      const questionText = questions[index].question;
+      const intro = `Question ${questionNum}. ${questionText}`;
+
+      addInsight(`Asking question ${questionNum}`);
+
+      speakText(intro, () => {
+        // Start listening after speaking
         setInterviewPhase("listening");
-        setAiState("listening");
-        resetTranscript();
-        setCurrentAnswer("");
-        setLiveTranscript("");
-        startListening();
-      }, 4000);
+        setTimeout(() => {
+          resetTranscript();
+          startListening();
+        }, 500);
+      });
     }
-  };
+  }, [questions, speakText, resetTranscript, startListening, addInsight]);
 
-  const handleRepeatQuestion = () => {
-    if (questions[currentQuestionIndex]) {
-      stopListening();
-      setInterviewPhase("speaking");
-      const questionText = `Of course! Let me repeat that. ${questions[currentQuestionIndex].question}`;
-      addToConversation("ai", questionText);
-      speakText(questionText);
+  // Wrapper that uses current state index
+  const askCurrentQuestion = useCallback(() => {
+    askQuestion(currentQuestionIndex);
+  }, [currentQuestionIndex, askQuestion]);
 
-      setTimeout(() => {
-        setInterviewPhase("listening");
-        startListening();
-      }, 4000);
-    }
-  };
+  const handleRepeatQuestion = useCallback(() => {
+    if (!questions[currentQuestionIndex]) return;
 
-  const handleSkipQuestion = async () => {
     stopListening();
+    resetTranscript();
+    setCurrentAnswer("");
+    setLiveTranscript("");
+    setInterviewPhase("speaking");
 
-    // Add skip insight
-    setAiInsights(prev => [`Question ${currentQuestionIndex + 1} skipped`, ...prev].slice(0, 8));
+    const questionText = questions[currentQuestionIndex].question;
+    const response = `Of course! Let me repeat that for you. ${questionText}`;
+
+    addInsight("Repeating question");
+
+    speakText(response, () => {
+      setInterviewPhase("listening");
+      setTimeout(() => {
+        resetTranscript();
+        setLastProcessedCommand("");
+        startListening();
+      }, 500);
+    });
+  }, [currentQuestionIndex, questions, stopListening, resetTranscript, speakText, startListening, addInsight]);
+
+  const handleSkipQuestion = useCallback(() => {
+    stopListening();
+    resetTranscript();
+
+    const questionIndex = currentQuestionIndex;
+    addInsight(`Question ${questionIndex + 1} skipped`);
 
     // Save as skipped
     setAnswers(prev => [...prev, {
-      question: questions[currentQuestionIndex].question,
+      question: questions[questionIndex]?.question || "",
       answer: "[Skipped]",
       score: 0,
     }]);
 
-    const skipMessage = "No problem, let's move on to the next question.";
-    addToConversation("ai", skipMessage);
-    speakText(skipMessage);
+    const skipMessage = "No problem! Let's move on to the next question.";
 
-    resetTranscript();
-    setCurrentAnswer("");
-    setLiveTranscript("");
-
-    setTimeout(() => {
-      if (currentQuestionIndex < questions.length - 1) {
-        setCurrentQuestionIndex(prev => prev + 1);
-        setTimeout(() => askCurrentQuestion(), 1500);
+    speakText(skipMessage, () => {
+      if (questionIndex < questions.length - 1) {
+        const nextIndex = questionIndex + 1;
+        setCurrentQuestionIndex(nextIndex);
+        setTimeout(() => askQuestion(nextIndex), 500);
       } else {
-        speakText("That concludes all the questions. Let me analyze your interview.");
-        setTimeout(() => finishInterview(), 3000);
+        handleEndInterview();
       }
-    }, 2000);
-  };
+    });
+  }, [currentQuestionIndex, questions, stopListening, resetTranscript, speakText, addInsight, askQuestion]);
 
-  const handleGoBack = () => {
-    if (currentQuestionIndex > 0) {
-      stopListening();
-      setCurrentQuestionIndex(prev => prev - 1);
-      // Remove last answer
-      setAnswers(prev => prev.slice(0, -1));
-
-      const goBackMessage = "Sure, let's go back to the previous question.";
-      addToConversation("ai", goBackMessage);
-      speakText(goBackMessage);
-
-      resetTranscript();
-      setCurrentAnswer("");
-      setLiveTranscript("");
-
-      setTimeout(() => {
-        askCurrentQuestion();
-      }, 2000);
+  const handleGoBack = useCallback(() => {
+    if (currentQuestionIndex === 0) {
+      speakText("This is the first question, I can't go back further. Let me repeat it for you.");
+      handleRepeatQuestion();
+      return;
     }
-  };
 
-  const handleClarifyQuestion = async () => {
     stopListening();
+    resetTranscript();
+
+    // Remove last answer
+    setAnswers(prev => prev.slice(0, -1));
+
+    const prevIndex = currentQuestionIndex - 1;
+    addInsight("Going back to previous question");
+
+    const goBackMessage = "Sure! Let's go back to the previous question.";
+
+    speakText(goBackMessage, () => {
+      setCurrentQuestionIndex(prevIndex);
+      setTimeout(() => askQuestion(prevIndex), 500);
+    });
+  }, [currentQuestionIndex, stopListening, resetTranscript, speakText, handleRepeatQuestion, addInsight, askQuestion]);
+
+  const handleClarifyQuestion = useCallback(() => {
+    if (!questions[currentQuestionIndex]) return;
+
+    stopListening();
+    resetTranscript();
     setInterviewPhase("speaking");
-    setAiState("thinking");
 
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "conductInterview",
-          type: "command",
-          candidateName: interview?.candidate?.name || "Candidate",
-          position: interview?.candidate?.position || "Position",
-          currentQuestion: questions[currentQuestionIndex]?.question || "",
-          candidateResponse: "I don't understand the question",
-        }),
-      });
+    const questionText = questions[currentQuestionIndex].question;
+    const clarification = `Let me explain what I'm looking for. This question is asking about your personal experience. Think of a specific situation from your work or life where you demonstrated this. Here's the question again: ${questionText}`;
 
-      if (response.ok) {
-        const data = await response.json();
-        setAiState("speaking");
-        addToConversation("ai", data.response);
-        speakText(data.response);
-      }
-    } catch (error) {
-      const clarification = `Let me explain this differently. This question is asking about your past experience. Think of a specific situation that demonstrates ${questions[currentQuestionIndex]?.question}`;
-      addToConversation("ai", clarification);
-      speakText(clarification);
-    }
+    addInsight("Clarifying question");
 
-    setTimeout(() => {
+    speakText(clarification, () => {
       setInterviewPhase("listening");
-      setAiState("listening");
-      startListening();
-    }, 5000);
-  };
+      setTimeout(() => {
+        resetTranscript();
+        setLastProcessedCommand("");
+        startListening();
+      }, 500);
+    });
+  }, [currentQuestionIndex, questions, stopListening, resetTranscript, speakText, startListening, addInsight]);
 
   const evaluateAnswer = async (question: string, answer: string): Promise<number> => {
     try {
@@ -481,45 +628,53 @@ export default function InterviewSessionPage() {
   };
 
   const handleDoneAnswering = () => {
-    stopListening();
-    setInterviewPhase("confirming");
-    setAiState("idle");
-
-    addToConversation("candidate", currentAnswer);
-
-    const confirmText = "Thank you for your answer. Would you like to add anything else, or shall we continue?";
-    addToConversation("ai", confirmText);
-    speakText(confirmText);
-  };
-
-  const handleEditAnswer = () => {
-    setInterviewPhase("listening");
-    setAiState("listening");
-    startListening();
-    speakText("Please continue with your answer.");
-  };
-
-  const handleConfirmAnswer = async () => {
-    if (!currentAnswer.trim() || !questions[currentQuestionIndex]) {
-      speakText("I didn't catch your answer. Could you please respond to the question?");
-      setInterviewPhase("listening");
-      setAiState("listening");
-      startListening();
+    // Check if it's actually a command, not a real answer
+    const command = detectVoiceCommand(currentAnswer);
+    if (command) {
+      // It's a command, not an answer
       return;
     }
 
+    stopListening();
+    setInterviewPhase("confirming");
+
+    const confirmText = "Thank you for your answer. Would you like to add anything, or shall I move on? Click Confirm when ready.";
+    speakText(confirmText);
+  };
+
+  // Auto-finish handler - skips confirmation step
+  const handleAutoFinish = useCallback(async () => {
+    // Check if answer is actually a command
+    const command = detectVoiceCommand(currentAnswer);
+    if (command) {
+      switch (command) {
+        case "repeat": handleRepeatQuestion(); return;
+        case "skip": handleSkipQuestion(); return;
+        case "goBack": handleGoBack(); return;
+        case "clarify": handleClarifyQuestion(); return;
+      }
+    }
+
+    if (!currentAnswer.trim() || currentAnswer.trim().length < 15) {
+      // Not enough content, don't auto-submit
+      return;
+    }
+
+    stopListening();
     setInterviewPhase("evaluating");
     setIsEvaluating(true);
-    setAiState("thinking");
 
+    addInsight("Auto-submitting answer...");
+
+    const questionIndex = currentQuestionIndex;
     const score = await evaluateAnswer(
-      questions[currentQuestionIndex].question,
+      questions[questionIndex].question,
       currentAnswer
     );
 
     // Save answer
     const newAnswer = {
-      question: questions[currentQuestionIndex].question,
+      question: questions[questionIndex].question,
       answer: currentAnswer,
       score,
     };
@@ -527,98 +682,136 @@ export default function InterviewSessionPage() {
 
     // Save to database
     await answerQuestion(
-      questions[currentQuestionIndex].id,
+      questions[questionIndex].id,
       currentAnswer,
       { score },
       score
     );
 
-    // Get smart AI feedback
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "conductInterview",
-          type: "respond",
-          candidateName: interview?.candidate?.name || "Candidate",
-          position: interview?.candidate?.position || "Position",
-          currentQuestionIndex,
-          totalQuestions: questions.length,
-          questionsAnswered: answers.length + 1,
-          averageScore: Math.round(([...answers, newAnswer].reduce((s, a) => s + a.score, 0)) / (answers.length + 1)),
-          lastScore: score,
-          conversationHistory: conversationHistory.slice(-6),
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setAiState("speaking");
-        setAiInsights(prev => [data.response, `Score: ${score}%`, ...prev].slice(0, 8));
-        addToConversation("ai", data.response);
-        speakText(data.response);
-      }
-    } catch (error) {
-      // Fallback feedback
-      const feedbackText = score >= 80
-        ? "Excellent answer! Let's continue."
-        : score >= 60
-          ? "Good response. Moving on."
-          : "Thank you. Let's proceed.";
-      setAiInsights(prev => [feedbackText, `Score: ${score}%`, ...prev].slice(0, 8));
-      addToConversation("ai", feedbackText);
-      speakText(feedbackText);
-    }
-
     setIsEvaluating(false);
-    resetTranscript();
-    setCurrentAnswer("");
-    setLiveTranscript("");
 
-    // Move to next question or finish
-    setTimeout(() => {
-      if (currentQuestionIndex < questions.length - 1) {
-        setCurrentQuestionIndex(prev => prev + 1);
-        setTimeout(() => askCurrentQuestion(), 2000);
+    // Generate feedback
+    const feedbackText = score >= 80
+      ? "Excellent answer! That was really well thought out."
+      : score >= 60
+        ? "Good answer, thank you for sharing that."
+        : "Thank you for your response.";
+
+    addInsight(`Answer scored: ${score}%`);
+
+    speakText(feedbackText, () => {
+      resetTranscript();
+      setCurrentAnswer("");
+      setLiveTranscript("");
+      setLastProcessedCommand("");
+
+      if (questionIndex < questions.length - 1) {
+        setCurrentQuestionIndex(questionIndex + 1);
+        // Use setTimeout to ensure state is updated
+        setTimeout(() => {
+          askQuestion(questionIndex + 1);
+        }, 1000);
       } else {
-        // Get closing message
         handleEndInterview();
       }
-    }, 3000);
+    });
+  }, [currentAnswer, currentQuestionIndex, questions, stopListening, addInsight, speakText, resetTranscript]);
+
+  const handleEditAnswer = () => {
+    setInterviewPhase("listening");
+    resetTranscript();
+    setLastProcessedCommand("");
+    speakText("Please continue with your answer.", () => {
+      startListening();
+    });
   };
 
-  const handleEndInterview = async () => {
-    setAiState("speaking");
-
-    try {
-      const avgScore = answers.length > 0
-        ? Math.round(answers.reduce((s, a) => s + a.score, 0) / answers.length)
-        : 0;
-
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "conductInterview",
-          type: "end",
-          candidateName: interview?.candidate?.name || "Candidate",
-          position: interview?.candidate?.position || "Position",
-          averageScore: avgScore,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        addToConversation("ai", data.response);
-        speakText(data.response);
+  const handleConfirmAnswer = async () => {
+    // Check if answer is actually a command
+    const command = detectVoiceCommand(currentAnswer);
+    if (command) {
+      switch (command) {
+        case "repeat": handleRepeatQuestion(); return;
+        case "skip": handleSkipQuestion(); return;
+        case "goBack": handleGoBack(); return;
+        case "clarify": handleClarifyQuestion(); return;
       }
-    } catch (error) {
-      speakText("That concludes our interview. Thank you for your time!");
     }
 
-    setTimeout(() => finishInterview(), 4000);
+    if (!currentAnswer.trim() || currentAnswer.trim().length < 10) {
+      speakText("I didn't catch a complete answer. Could you please respond to the question? You can also say 'repeat' if you'd like to hear it again.", () => {
+        setInterviewPhase("listening");
+        resetTranscript();
+        setLastProcessedCommand("");
+        startListening();
+      });
+      return;
+    }
+
+    setInterviewPhase("evaluating");
+    setIsEvaluating(true);
+
+    const questionIndex = currentQuestionIndex;
+    const score = await evaluateAnswer(
+      questions[questionIndex].question,
+      currentAnswer
+    );
+
+    // Save answer
+    const newAnswer = {
+      question: questions[questionIndex].question,
+      answer: currentAnswer,
+      score,
+    };
+    setAnswers(prev => [...prev, newAnswer]);
+
+    // Save to database
+    await answerQuestion(
+      questions[questionIndex].id,
+      currentAnswer,
+      { score },
+      score
+    );
+
+    setIsEvaluating(false);
+
+    // Generate feedback
+    const feedbackText = score >= 80
+      ? "Excellent answer! That was really well thought out."
+      : score >= 60
+        ? "Good answer, thank you for sharing that."
+        : "Thank you for your response.";
+
+    addInsight(`Answer scored: ${score}%`);
+
+    speakText(feedbackText, () => {
+      resetTranscript();
+      setCurrentAnswer("");
+      setLiveTranscript("");
+      setLastProcessedCommand("");
+
+      if (questionIndex < questions.length - 1) {
+        const nextIndex = questionIndex + 1;
+        setCurrentQuestionIndex(nextIndex);
+        setTimeout(() => askQuestion(nextIndex), 1000);
+      } else {
+        handleEndInterview();
+      }
+    });
   };
+
+  const handleEndInterview = useCallback(() => {
+    stopListening();
+    if (isRecording) {
+      stopRecording();
+    }
+
+    const closingMessage = `That concludes all the questions! Thank you so much ${interview?.candidate?.name || ""} for your time today. You did a wonderful job. I'm now analyzing your responses and will prepare a detailed report.`;
+
+    speakText(closingMessage, () => {
+      setTimeout(() => finishInterview(), 2000);
+    });
+  }, [interview, stopListening, speakText, isRecording, stopRecording]);
 
   const finishInterview = async () => {
     stopListening();
@@ -626,8 +819,9 @@ export default function InterviewSessionPage() {
     stopCamera();
 
     // Calculate final score
-    const avgScore = answers.length > 0
-      ? Math.round(answers.reduce((sum, a) => sum + a.score, 0) / answers.length)
+    const answeredQuestions = answers.filter(a => a.score > 0);
+    const avgScore = answeredQuestions.length > 0
+      ? Math.round(answeredQuestions.reduce((sum, a) => sum + a.score, 0) / answeredQuestions.length)
       : 70;
 
     const metricsAvg = Math.round((metrics.confidence + metrics.engagement + metrics.clarity) / 3);
@@ -664,22 +858,14 @@ export default function InterviewSessionPage() {
         setFeedback({
           strengths: data.strengths || ["Good communication", "Relevant experience"],
           improvements: data.improvements || ["Provide more examples"],
-          summary: data.summary || `Overall score: ${final}%. ${final >= 80 ? "Strong candidate." : final >= 60 ? "Promising candidate." : "Needs development."}`,
+          summary: data.summary || `Overall score: ${final}%.`,
         });
       }
     } catch (error) {
       setFeedback({
-        strengths: final >= 70
-          ? ["Good communication skills", "Relevant experience", "Strong technical knowledge"]
-          : ["Showed enthusiasm", "Basic understanding of role"],
-        improvements: final < 80
-          ? ["Could provide more specific examples", "Expand on technical details"]
-          : ["Minor areas for growth identified"],
-        summary: final >= 80
-          ? "Strong candidate with excellent qualifications. Recommended for next round."
-          : final >= 60
-            ? "Promising candidate with potential. Consider for further evaluation."
-            : "Candidate needs more experience. Consider for future opportunities.",
+        strengths: ["Good communication skills", "Showed enthusiasm"],
+        improvements: ["Could provide more specific examples"],
+        summary: `Overall score: ${final}%. ${final >= 80 ? "Strong candidate." : final >= 60 ? "Promising candidate." : "Needs development."}`,
       });
     }
 
@@ -875,11 +1061,28 @@ export default function InterviewSessionPage() {
                 </div>
               </GlassCard>
 
+              {/* Voice Commands Info */}
+              <GlassCard className="p-6">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Mic className="w-5 h-5 text-green-400" />
+                  Voice Commands
+                </h2>
+                <div className="space-y-2 text-sm text-white/70">
+                  <p>During the interview, you can say:</p>
+                  <ul className="space-y-1 ml-4">
+                    <li>"<span className="text-green-400">Repeat the question</span>" - hear it again</li>
+                    <li>"<span className="text-blue-400">Skip</span>" or "<span className="text-blue-400">Next question</span>" - move on</li>
+                    <li>"<span className="text-yellow-400">Go back</span>" - previous question</li>
+                    <li>"<span className="text-purple-400">I don't understand</span>" - get clarification</li>
+                  </ul>
+                </div>
+              </GlassCard>
+
               {/* AI Settings */}
               <GlassCard className="p-6">
                 <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-purple-400" />
-                  AI Interview Settings
+                  AI Settings
                 </h2>
                 <div className="space-y-3">
                   <label className="flex items-center justify-between cursor-pointer">
@@ -897,9 +1100,6 @@ export default function InterviewSessionPage() {
                       )} />
                     </button>
                   </label>
-                  <p className="text-white/40 text-sm">
-                    Alex, your AI interviewer, will ask questions and provide feedback throughout the interview.
-                  </p>
                 </div>
               </GlassCard>
 
@@ -910,7 +1110,7 @@ export default function InterviewSessionPage() {
                   Send to Candidate
                 </h2>
                 <p className="text-white/50 text-sm mb-4">
-                  Copy this link and send it to the candidate. They can join and complete the AI interview independently.
+                  Copy this link for the candidate to complete the interview independently.
                 </p>
                 <div className="flex gap-2">
                   <input
@@ -941,10 +1141,6 @@ export default function InterviewSessionPage() {
                   </>
                 )}
               </Button>
-
-              <p className="text-center text-white/30 text-sm">
-                Or send the link above for candidate to do AI interview alone
-              </p>
             </div>
           </div>
         </div>
@@ -975,7 +1171,7 @@ export default function InterviewSessionPage() {
               />
               <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40">
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-100 text-sm font-bold">RECORDING</span>
+                <span className="text-red-100 text-sm font-bold">LIVE</span>
               </div>
               <div className="px-4 py-2 rounded-full bg-white/5 font-mono">
                 <Clock className="w-4 h-4 inline mr-2" />
@@ -985,16 +1181,13 @@ export default function InterviewSessionPage() {
           </div>
 
           <div className="grid lg:grid-cols-12 gap-4">
-            {/* Left Column - AI Avatar */}
+            {/* Left Column - AI Avatar & Controls */}
             <div className="lg:col-span-3 space-y-4">
               <GlassCard className="p-6 flex flex-col items-center">
-                <AIAvatar state={aiState} name="Alex" size="lg" />
-                <div className="mt-4 text-center">
-                  <p className="text-sm text-white/50">AI Interviewer</p>
-                </div>
+                <AIAvatar state={aiState} name="Sarah" size="lg" />
               </GlassCard>
 
-              {/* Conversation Controls */}
+              {/* Quick Action Buttons */}
               <GlassCard className="p-4">
                 <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
                   <MessageSquare className="w-4 h-4 text-blue-400" />
@@ -1006,7 +1199,7 @@ export default function InterviewSessionPage() {
                     size="sm"
                     className="w-full justify-start gap-2"
                     onClick={handleRepeatQuestion}
-                    disabled={interviewPhase !== "listening"}
+                    disabled={interviewPhase === "speaking" || interviewPhase === "evaluating"}
                   >
                     <RotateCcw className="w-4 h-4" />
                     Repeat Question
@@ -1016,7 +1209,7 @@ export default function InterviewSessionPage() {
                     size="sm"
                     className="w-full justify-start gap-2"
                     onClick={handleGoBack}
-                    disabled={currentQuestionIndex === 0 || interviewPhase !== "listening"}
+                    disabled={currentQuestionIndex === 0 || interviewPhase === "speaking" || interviewPhase === "evaluating"}
                   >
                     <ArrowLeft className="w-4 h-4" />
                     Previous Question
@@ -1026,7 +1219,7 @@ export default function InterviewSessionPage() {
                     size="sm"
                     className="w-full justify-start gap-2"
                     onClick={handleSkipQuestion}
-                    disabled={interviewPhase !== "listening"}
+                    disabled={interviewPhase === "speaking" || interviewPhase === "evaluating"}
                   >
                     <SkipForward className="w-4 h-4" />
                     Skip Question
@@ -1036,7 +1229,7 @@ export default function InterviewSessionPage() {
                     size="sm"
                     className="w-full justify-start gap-2"
                     onClick={handleClarifyQuestion}
-                    disabled={interviewPhase !== "listening"}
+                    disabled={interviewPhase === "speaking" || interviewPhase === "evaluating"}
                   >
                     <HelpCircle className="w-4 h-4" />
                     Clarify Question
@@ -1053,58 +1246,158 @@ export default function InterviewSessionPage() {
 
             {/* Center Column - Video & Question */}
             <div className="lg:col-span-6 space-y-4">
-              {/* Video Feed */}
-              <GlassCard className="p-0 overflow-hidden relative">
-                <div className="aspect-video bg-black">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover"
-                  />
-
-                  {/* Detection badges */}
-                  <div className="absolute top-4 left-4 flex gap-2">
-                    <span className="px-2 py-1 rounded-full bg-green-500/20 border border-green-500/40 text-green-100 text-xs flex items-center gap-1">
-                      <Eye className="w-3 h-3" /> Face
-                    </span>
-                    <span className="px-2 py-1 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-100 text-xs flex items-center gap-1">
-                      <Hand className="w-3 h-3" /> Hands
-                    </span>
-                    <span className="px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-100 text-xs capitalize">
-                      {currentEmotion}
-                    </span>
-                  </div>
-
-                  {/* AI Avatar Compact - floating */}
-                  <div className="absolute top-4 right-4">
-                    <AIAvatarCompact state={aiState} />
-                  </div>
-
-                  {/* Listening/Speaking indicator */}
-                  {isListening && (
-                    <div className="absolute bottom-4 left-4">
-                      <span className="px-3 py-2 rounded-full bg-green-500/20 border border-green-500/40 text-green-100 text-sm flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        Listening to your answer...
+              {/* Dual Video Feed - Both Participants */}
+              <GlassCard className="p-0 overflow-hidden">
+                <div className="grid grid-cols-2 gap-1 bg-gray-900">
+                  {/* AI Interviewer Panel */}
+                  <div className="relative aspect-video bg-gradient-to-br from-blue-900/50 to-purple-900/50 flex items-center justify-center">
+                    <div className="text-center">
+                      <AIAvatar state={aiState} name="Sarah" size="md" />
+                    </div>
+                    {/* AI Name Badge */}
+                    <div className="absolute bottom-3 left-3">
+                      <span className="px-3 py-1.5 rounded-full bg-purple-500/30 border border-purple-500/50 text-purple-100 text-sm flex items-center gap-2">
+                        <Sparkles className="w-3 h-3" />
+                        Sarah (AI Interviewer)
                       </span>
                     </div>
-                  )}
+                    {/* Speaking indicator */}
+                    {isSpeaking && (
+                      <div className="absolute top-3 right-3">
+                        <span className="px-2 py-1 rounded-full bg-purple-500/40 text-purple-100 text-xs flex items-center gap-1">
+                          <Volume2 className="w-3 h-3 animate-pulse" /> Speaking
+                        </span>
+                      </div>
+                    )}
+                  </div>
 
-                  {/* Controls overlay */}
-                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
-                    <MediaControls
-                      videoEnabled={videoEnabled}
-                      audioEnabled={audioEnabled}
-                      aiSpeechEnabled={aiSpeechEnabled}
-                      isPaused={isPaused}
-                      onToggleVideo={toggleVideo}
-                      onToggleAudio={toggleAudio}
-                      onToggleAiSpeech={() => setAiSpeechEnabled(!aiSpeechEnabled)}
-                      onTogglePause={() => setIsPaused(!isPaused)}
-                      onEndInterview={handleEndInterview}
+                  {/* Candidate Video Panel */}
+                  <div className="relative aspect-video bg-black">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
                     />
+                    {/* Recording indicator */}
+                    {isRecording && (
+                      <div className="absolute top-3 left-3">
+                        <span className="px-2 py-1 rounded-full bg-red-500/40 border border-red-500 text-red-100 text-xs flex items-center gap-1 animate-pulse">
+                          <span className="w-2 h-2 rounded-full bg-red-500" /> REC
+                        </span>
+                      </div>
+                    )}
+                    {/* Detection badges */}
+                    <div className="absolute top-3 right-3 flex gap-1">
+                      <span className="px-2 py-1 rounded-full bg-green-500/20 border border-green-500/40 text-green-100 text-xs flex items-center gap-1">
+                        <Eye className="w-3 h-3" />
+                      </span>
+                      <span className="px-2 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-100 text-xs capitalize">
+                        {currentEmotion}
+                      </span>
+                    </div>
+                    {/* Candidate Name Badge */}
+                    <div className="absolute bottom-3 left-3">
+                      <span className="px-3 py-1.5 rounded-full bg-blue-500/30 border border-blue-500/50 text-blue-100 text-sm flex items-center gap-2">
+                        <User className="w-3 h-3" />
+                        {interview?.candidate?.name || "Candidate"}
+                      </span>
+                    </div>
+                    {/* Listening indicator */}
+                    {isListening && (
+                      <div className="absolute bottom-3 right-3">
+                        <span className="px-2 py-1 rounded-full bg-green-500/40 text-green-100 text-xs flex items-center gap-1">
+                          <Mic className="w-3 h-3 animate-pulse" /> Listening
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Status Bar */}
+                <div className="px-4 py-2 bg-black/50 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {isListening && (
+                        <span className="text-green-400 text-sm flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                          Listening... say "repeat" or "skip" anytime
+                        </span>
+                      )}
+                      {isSpeaking && (
+                        <span className="text-purple-400 text-sm flex items-center gap-1">
+                          <Volume2 className="w-4 h-4 animate-pulse" />
+                          Sarah is speaking...
+                        </span>
+                      )}
+                      {isProcessingCommand && (
+                        <span className="text-yellow-400 text-sm flex items-center gap-1">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Processing...
+                        </span>
+                      )}
+                      {interviewPhase === "evaluating" && (
+                        <span className="text-blue-400 text-sm flex items-center gap-1">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Evaluating your answer...
+                        </span>
+                      )}
+                    </div>
+                    {/* Controls */}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("rounded-full h-8 w-8", !videoEnabled && "bg-red-500/20")}
+                        onClick={toggleVideo}
+                      >
+                        {videoEnabled ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("rounded-full h-8 w-8", !audioEnabled && "bg-red-500/20")}
+                        onClick={toggleAudio}
+                      >
+                        {audioEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("rounded-full h-8 w-8", !aiSpeechEnabled && "bg-yellow-500/20")}
+                        onClick={() => setAiSpeechEnabled(!aiSpeechEnabled)}
+                      >
+                        {aiSpeechEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                      </Button>
+                      <div className="w-px h-6 bg-white/20" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("rounded-full h-8 w-8", isRecording && "bg-red-500/30 text-red-400")}
+                        onClick={isRecording ? stopRecording : startRecording}
+                        title={isRecording ? "Stop Recording" : "Start Recording"}
+                      >
+                        {isRecording ? <Square className="w-4 h-4" /> : <span className="w-3 h-3 rounded-full bg-red-500" />}
+                      </Button>
+                      <div className="w-px h-6 bg-white/20" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="rounded-full h-8 w-8"
+                        onClick={() => setIsPaused(!isPaused)}
+                      >
+                        {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                        onClick={handleEndInterview}
+                      >
+                        <Square className="w-4 h-4 mr-1" /> End
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </GlassCard>
@@ -1145,7 +1438,7 @@ export default function InterviewSessionPage() {
                       <p className="text-white/80">{liveTranscript}</p>
                     ) : (
                       <p className="text-white/30 italic">
-                        {isListening ? "Speak now - your answer will appear here..." : "Waiting for response..."}
+                        {isListening ? "Speak now... Say 'repeat' to hear the question again" : "Waiting..."}
                       </p>
                     )}
                   </div>
@@ -1166,16 +1459,12 @@ export default function InterviewSessionPage() {
                         }}
                       >
                         {isListening ? (
-                          <>
-                            <MicOff className="w-4 h-4 mr-2" /> Pause Listening
-                          </>
+                          <><MicOff className="w-4 h-4 mr-2" /> Pause</>
                         ) : (
-                          <>
-                            <Mic className="w-4 h-4 mr-2" /> Resume Listening
-                          </>
+                          <><Mic className="w-4 h-4 mr-2" /> Resume</>
                         )}
                       </Button>
-                      <Button onClick={handleDoneAnswering} disabled={!currentAnswer.trim()}>
+                      <Button onClick={handleDoneAnswering} disabled={!currentAnswer.trim() || currentAnswer.trim().length < 10}>
                         Done Answering <ChevronRight className="w-4 h-4 ml-2" />
                       </Button>
                     </>
@@ -1184,10 +1473,10 @@ export default function InterviewSessionPage() {
                   {interviewPhase === "confirming" && (
                     <>
                       <Button variant="secondary" onClick={handleEditAnswer}>
-                        <RotateCcw className="w-4 h-4 mr-2" /> Edit Answer
+                        <RotateCcw className="w-4 h-4 mr-2" /> Edit
                       </Button>
                       <Button onClick={handleConfirmAnswer}>
-                        <CheckCircle className="w-4 h-4 mr-2" /> Confirm & Continue
+                        <CheckCircle className="w-4 h-4 mr-2" /> Confirm
                       </Button>
                     </>
                   )}
@@ -1225,6 +1514,9 @@ export default function InterviewSessionPage() {
                       {insight}
                     </motion.div>
                   ))}
+                  {aiInsights.length === 0 && (
+                    <p className="text-white/30 text-xs">Insights will appear here</p>
+                  )}
                 </div>
               </GlassCard>
 
@@ -1263,7 +1555,8 @@ export default function InterviewSessionPage() {
                         "px-2 py-0.5 rounded-full text-xs",
                         a.score >= 80 ? "bg-green-500/20 text-green-400" :
                           a.score >= 60 ? "bg-yellow-500/20 text-yellow-400" :
-                            "bg-red-500/20 text-red-400"
+                            a.score === 0 ? "bg-gray-500/20 text-gray-400" :
+                              "bg-red-500/20 text-red-400"
                       )}>
                         {a.score === 0 ? "Skipped" : `${a.score}%`}
                       </span>
@@ -1333,7 +1626,7 @@ export default function InterviewSessionPage() {
                 recommendation === "rejected" ? "bg-red-500/20 text-red-400" :
                   "bg-yellow-500/20 text-yellow-400"
             )}>
-              {recommendation === "approved" ? "APPROVED - Proceed to Next Round" :
+              {recommendation === "approved" ? "APPROVED" :
                 recommendation === "rejected" ? "NOT APPROVED" :
                   "NEEDS REVIEW"}
             </div>
@@ -1424,7 +1717,7 @@ export default function InterviewSessionPage() {
             </div>
             <div className="text-center p-4 rounded-lg bg-white/5">
               <div className="text-2xl font-bold">{answers.length}</div>
-              <div className="text-white/50 text-sm">Questions Answered</div>
+              <div className="text-white/50 text-sm">Answered</div>
             </div>
             <div className="text-center p-4 rounded-lg bg-white/5">
               <div className="text-2xl font-bold">
@@ -1432,7 +1725,7 @@ export default function InterviewSessionPage() {
                   ? Math.round(answers.filter(a => a.score > 0).reduce((s, a) => s + a.score, 0) / answers.filter(a => a.score > 0).length)
                   : 0}%
               </div>
-              <div className="text-white/50 text-sm">Avg Answer Score</div>
+              <div className="text-white/50 text-sm">Avg Score</div>
             </div>
             <div className="text-center p-4 rounded-lg bg-white/5">
               <div className="text-2xl font-bold">{questions.length}</div>
@@ -1445,7 +1738,7 @@ export default function InterviewSessionPage() {
         <div className="flex gap-4 justify-center">
           <Link href="/dashboard/interviews">
             <Button variant="secondary" className="gap-2">
-              <ArrowLeft className="w-4 h-4" /> Back to Interviews
+              <ArrowLeft className="w-4 h-4" /> Back
             </Button>
           </Link>
           <Link href="/dashboard/reports">
