@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { InsertTables, UpdateTables, InterviewQuestion } from "@/lib/supabase/types";
+import { getBalancedQuestionSet, type InterviewQuestionData } from "@/lib/data/interviewQuestions";
 
 export async function getInterviewQuestions(interviewId: string): Promise<InterviewQuestion[]> {
   const supabase = await createClient();
@@ -106,66 +107,58 @@ export async function deleteQuestion(id: string): Promise<void> {
   }
 }
 
-// Generate default questions based on position
-export function generateDefaultQuestions(position: string): string[] {
-  const baseQuestions = [
-    "Tell me about yourself and your background.",
-    "Why are you interested in this position?",
-    "What are your greatest strengths?",
-    "Where do you see yourself in 5 years?",
-    "Do you have any questions for us?",
-  ];
+// Generate questions using the comprehensive question database
+export async function generateDefaultQuestions(position: string, count: number = 10): Promise<string[]> {
+  // Get balanced questions from the database
+  const questionData = getBalancedQuestionSet(position, count);
+  return questionData.map((q: InterviewQuestionData) => q.question);
+}
 
-  const technicalQuestions: Record<string, string[]> = {
-    developer: [
-      "Describe a challenging technical problem you solved recently.",
-      "How do you approach debugging complex issues?",
-      "What's your experience with version control systems?",
-      "How do you stay updated with new technologies?",
-      "Describe your ideal development workflow.",
-    ],
-    designer: [
-      "Walk me through your design process.",
-      "How do you handle feedback on your designs?",
-      "What tools do you use for design work?",
-      "How do you balance aesthetics with usability?",
-      "Describe a project where you improved user experience.",
-    ],
-    manager: [
-      "How do you motivate your team?",
-      "Describe your leadership style.",
-      "How do you handle conflicts within your team?",
-      "What metrics do you use to measure team success?",
-      "How do you prioritize competing deadlines?",
-    ],
-    default: [
-      "Describe a time you worked effectively under pressure.",
-      "How do you handle disagreements with colleagues?",
-      "What motivates you in your work?",
-      "How do you prioritize your tasks?",
-      "Describe a project you're most proud of.",
-    ],
-  };
-
-  const positionLower = position.toLowerCase();
-  let roleQuestions = technicalQuestions.default;
-
-  if (positionLower.includes("developer") || positionLower.includes("engineer") || positionLower.includes("programmer")) {
-    roleQuestions = technicalQuestions.developer;
-  } else if (positionLower.includes("designer") || positionLower.includes("ux") || positionLower.includes("ui")) {
-    roleQuestions = technicalQuestions.designer;
-  } else if (positionLower.includes("manager") || positionLower.includes("lead") || positionLower.includes("director")) {
-    roleQuestions = technicalQuestions.manager;
-  }
-
-  return [...baseQuestions.slice(0, 2), ...roleQuestions, ...baseQuestions.slice(2)];
+// Get questions with full metadata (for advanced features)
+export async function generateQuestionsWithMetadata(position: string, count: number = 10): Promise<InterviewQuestionData[]> {
+  return getBalancedQuestionSet(position, count);
 }
 
 export async function initializeInterviewQuestions(
   interviewId: string,
-  position: string
+  position: string,
+  useAI: boolean = false
 ): Promise<InterviewQuestion[]> {
-  const questions = generateDefaultQuestions(position);
+  let questions: string[];
+
+  // Try to use AI-generated questions if enabled and API key is available
+  if (useAI) {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || ''}/api/ai`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "generateQuestions",
+          position,
+          questionCount: 10,
+          questionTypes: ["behavioral", "technical", "situational", "cultural"],
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.questions && Array.isArray(data.questions)) {
+          questions = data.questions.map((q: any) => q.question || q);
+        } else {
+          throw new Error("Invalid AI response");
+        }
+      } else {
+        throw new Error("AI API request failed");
+      }
+    } catch (error) {
+      console.log("AI question generation unavailable, using local database");
+      questions = await generateDefaultQuestions(position, 10);
+    }
+  } else {
+    // Use local comprehensive question database
+    questions = await generateDefaultQuestions(position, 10);
+  }
+
   const createdQuestions: InterviewQuestion[] = [];
 
   for (const question of questions) {
@@ -177,4 +170,41 @@ export async function initializeInterviewQuestions(
   }
 
   return createdQuestions;
+}
+
+// Generate follow-up questions based on candidate's answer
+export async function generateFollowUpQuestion(
+  originalQuestion: string,
+  candidateAnswer: string,
+  position: string
+): Promise<string | null> {
+  try {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || ''}/api/ai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "chat",
+        messages: [
+          {
+            role: "user",
+            content: `Based on this interview exchange for a ${position} position:
+
+Question: "${originalQuestion}"
+Answer: "${candidateAnswer}"
+
+Generate ONE concise follow-up question to dig deeper into their response. Just provide the question, nothing else.`,
+          },
+        ],
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.message || null;
+    }
+  } catch (error) {
+    console.error("Failed to generate follow-up question:", error);
+  }
+
+  return null;
 }

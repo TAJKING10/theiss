@@ -4,7 +4,6 @@ import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { 
-  Brain, 
   Shield, 
   FileText, 
   Lock, 
@@ -13,9 +12,6 @@ import {
   CheckCircle2, 
   BarChart3, 
   Cpu, 
-  Mic, 
-  MessageSquare, 
-  Layers,
   ArrowRight
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
@@ -42,24 +38,6 @@ const staggerContainer = {
 };
 
 // Data
-const techStack = {
-  frontend: [
-    { name: "Next.js", icon: "▲", description: "React Framework" },
-    { name: "React", icon: "⚛", description: "UI Library" },
-    { name: "Tailwind CSS", icon: "◈", description: "Styling" },
-  ],
-  backend: [
-    { name: "Firebase", icon: "🔥", description: "Cloud Platform" },
-    { name: "FastAPI", icon: "⚡", description: "Python API" },
-  ],
-  ai: [
-    { name: "CNN", icon: <Brain size={32} />, description: "Visual Analysis" },
-    { name: "Wav2Vec", icon: <Mic size={32} />, description: "Speech Processing" },
-    { name: "BERT", icon: <MessageSquare size={32} />, description: "NLP Understanding" },
-    { name: "Fusion", icon: <Layers size={32} />, description: "Combined Intelligence" },
-  ],
-};
-
 const features = [
   {
     title: "Real-time Analysis",
@@ -123,7 +101,7 @@ const processSteps = [
   {
     step: "02",
     title: "AI Analysis",
-    description: "Our multimodal AI analyzes verbal and non-verbal cues using CNN, BERT, and Wav2Vec 2.0.",
+    description: "Our multimodal AI analyzes verbal and non-verbal cues to provide objective insights.",
   },
   {
     step: "03",
@@ -312,76 +290,6 @@ export default function Home() {
                 </div>
               </GlassCard>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Tech Stack Section */}
-      <section id="research" className="relative py-24 px-4 sm:px-6 lg:px-8 bg-white/[0.02]">
-        <div className="max-w-7xl mx-auto">
-          <motion.div
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true }}
-            variants={fadeIn}
-            className="text-center mb-20"
-          >
-            <h2 className="text-3xl md:text-5xl font-bold mb-6">
-              Built with Modern Tech
-            </h2>
-            <p className="text-white/50 text-lg max-w-2xl mx-auto">
-              Our stack combines the best of web development with state-of-the-art AI models
-            </p>
-          </motion.div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Frontend */}
-            <div className="space-y-6">
-              <h3 className="text-xl font-semibold text-white/90 border-l-4 border-blue-500 pl-4">Frontend</h3>
-              <div className="grid gap-4">
-                {techStack.frontend.map((tech) => (
-                  <GlassCard key={tech.name} className="flex items-center gap-4 p-4 hover:bg-white/5">
-                    <span className="text-2xl">{tech.icon}</span>
-                    <div>
-                      <div className="font-semibold">{tech.name}</div>
-                      <div className="text-xs text-white/50">{tech.description}</div>
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
-            </div>
-
-            {/* Backend */}
-            <div className="space-y-6">
-              <h3 className="text-xl font-semibold text-white/90 border-l-4 border-green-500 pl-4">Backend</h3>
-              <div className="grid gap-4">
-                {techStack.backend.map((tech) => (
-                  <GlassCard key={tech.name} className="flex items-center gap-4 p-4 hover:bg-white/5">
-                    <span className="text-2xl">{tech.icon}</span>
-                    <div>
-                      <div className="font-semibold">{tech.name}</div>
-                      <div className="text-xs text-white/50">{tech.description}</div>
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
-            </div>
-
-            {/* AI Models */}
-            <div className="space-y-6">
-              <h3 className="text-xl font-semibold text-white/90 border-l-4 border-purple-500 pl-4">AI Models</h3>
-              <div className="grid gap-4">
-                {techStack.ai.map((tech) => (
-                  <GlassCard key={tech.name} className="flex items-center gap-4 p-4 hover:bg-white/5">
-                    <div className="text-purple-400">{tech.icon}</div>
-                    <div>
-                      <div className="font-semibold">{tech.name}</div>
-                      <div className="text-xs text-white/50">{tech.description}</div>
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       </section>

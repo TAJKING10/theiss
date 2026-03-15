@@ -170,7 +170,7 @@ export default function InterviewLobbyPage() {
                       />
                     </div>
                     <div className="flex justify-between text-xs text-white/40">
-                      <span>Loading CNN, Wav2Vec 2.0, BERT...</span>
+                      <span>Optimizing analysis engines...</span>
                       <span>{calibrationProgress}%</span>
                     </div>
                   </div>

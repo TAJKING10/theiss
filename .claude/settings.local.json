@@ -19,7 +19,13 @@
       "mcp__supabase__list_migrations",
       "mcp__supabase__apply_migration",
       "Bash(ping:*)",
-      "mcp__supabase__generate_typescript_types"
+      "mcp__supabase__generate_typescript_types",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(del \"C:\\\\Users\\\\Toufi\\\\AndroidStudioProjects\\\\theiss\\\\interview-intelligence\\\\.next\\\\dev\\\\lock\")",
+      "Bash(powershell -Command:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

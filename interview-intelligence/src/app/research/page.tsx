@@ -37,11 +37,11 @@ const researchPapers = [
     tags: ["Ethics", "Bias Mitigation", "ML Fairness"],
   },
   {
-    title: "Wav2Vec 2.0 for Speech Analysis in Interviews",
+    title: "Advanced Speech Analysis in Interviews",
     authors: "Speech Processing Team",
     date: "2023",
-    abstract: "Leveraging self-supervised learning for speech representation to analyze candidate communication patterns and vocal confidence indicators.",
-    tags: ["Speech Processing", "Self-Supervised Learning", "NLP"],
+    abstract: "Leveraging advanced speech representation to analyze candidate communication patterns and vocal confidence indicators.",
+    tags: ["Speech Processing", "Audio Analysis", "Communication"],
   },
 ];
 
@@ -55,7 +55,7 @@ const methodology = [
   {
     step: "02",
     title: "Multimodal Processing",
-    description: "Parallel analysis using CNN for visual cues, Wav2Vec 2.0 for speech, and BERT for language understanding.",
+    description: "Parallel analysis of visual cues, speech patterns, and language understanding.",
     icon: BrainCircuit,
   },
   {
@@ -196,19 +196,19 @@ export default function ResearchPage() {
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* CNN */}
+            {/* Visual Analysis */}
             <GlassCard variant="elevated" className="p-8 md:p-10 border-l-4 border-l-blue-500">
               <div className="flex items-start gap-6 mb-6">
                 <div className="w-16 h-16 rounded-2xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
                   <Eye className="w-8 h-8 text-blue-400" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold mb-1">CNN</h3>
-                  <p className="text-blue-400 font-medium">Visual Analysis</p>
+                  <h3 className="text-2xl font-bold mb-1">Visual Analysis</h3>
+                  <p className="text-blue-400 font-medium">Non-verbal Cues</p>
                 </div>
               </div>
               <p className="text-white/60 leading-relaxed mb-6 text-lg">
-                Convolutional Neural Networks analyze visual cues from video frames,
+                Advanced computer vision systems analyze visual signals from video frames,
                 including body language, facial expressions, and engagement levels.
               </p>
               <div className="flex flex-wrap gap-2">
@@ -220,23 +220,23 @@ export default function ResearchPage() {
               </div>
             </GlassCard>
 
-            {/* Wav2Vec */}
+            {/* Speech Processing */}
             <GlassCard variant="elevated" className="p-8 md:p-10 border-l-4 border-l-green-500">
               <div className="flex items-start gap-6 mb-6">
                 <div className="w-16 h-16 rounded-2xl bg-green-500/10 flex items-center justify-center border border-green-500/20">
                   <BrainCircuit className="w-8 h-8 text-green-400" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold mb-1">Wav2Vec 2.0</h3>
-                  <p className="text-green-400 font-medium">Speech Processing</p>
+                  <h3 className="text-2xl font-bold mb-1">Speech Processing</h3>
+                  <p className="text-green-400 font-medium">Vocal Patterns</p>
                 </div>
               </div>
               <p className="text-white/60 leading-relaxed mb-6 text-lg">
-                Self-supervised speech recognition model that analyzes vocal patterns,
+                Sophisticated speech recognition systems that analyze vocal patterns,
                 confidence indicators, and communication clarity.
               </p>
               <div className="flex flex-wrap gap-2">
-                {["Speech Recognition", "Tone Analysis", "Confidence Detection"].map(tag => (
+                {["Speech Analysis", "Tone Detection", "Confidence Metrics"].map(tag => (
                   <span key={tag} className="px-3 py-1 rounded-full bg-green-500/10 text-green-400 text-xs font-medium border border-green-500/20">
                     {tag}
                   </span>
@@ -244,19 +244,19 @@ export default function ResearchPage() {
               </div>
             </GlassCard>
 
-            {/* BERT */}
+            {/* Language Understanding */}
             <GlassCard variant="elevated" className="p-8 md:p-10 border-l-4 border-l-purple-500">
               <div className="flex items-start gap-6 mb-6">
                 <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
                   <FileText className="w-8 h-8 text-purple-400" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold mb-1">BERT</h3>
-                  <p className="text-purple-400 font-medium">Language Understanding</p>
+                  <h3 className="text-2xl font-bold mb-1">Language Understanding</h3>
+                  <p className="text-purple-400 font-medium">Semantic Analysis</p>
                 </div>
               </div>
               <p className="text-white/60 leading-relaxed mb-6 text-lg">
-                Bidirectional transformer model for deep language understanding,
+                Natural language processing systems for deep semantic understanding,
                 analyzing response quality, relevance, and communication skills.
               </p>
               <div className="flex flex-wrap gap-2">
@@ -268,7 +268,7 @@ export default function ResearchPage() {
               </div>
             </GlassCard>
 
-            {/* Multimodal Fusion */}
+            {/* Intelligence Fusion */}
             <GlassCard variant="elevated" className="p-8 md:p-10 border-l-4 border-l-orange-500">
               <div className="flex items-start gap-6 mb-6">
                 <div className="w-16 h-16 rounded-2xl bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
@@ -280,11 +280,11 @@ export default function ResearchPage() {
                 </div>
               </div>
               <p className="text-white/60 leading-relaxed mb-6 text-lg">
-                Advanced fusion layer that combines insights from all modalities
+                Advanced fusion layer that combines insights from all signals
                 to generate holistic, bias-aware candidate assessments.
               </p>
               <div className="flex flex-wrap gap-2">
-                {["Cross-Modal Learning", "Attention Mechanisms", "Fairness Constraints"].map(tag => (
+                {["Signal Fusion", "Cross-Modal Analysis", "Fairness Metrics"].map(tag => (
                   <span key={tag} className="px-3 py-1 rounded-full bg-orange-500/10 text-orange-400 text-xs font-medium border border-orange-500/20">
                     {tag}
                   </span>
@@ -380,15 +380,6 @@ export default function ResearchPage() {
                 Get Started <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
-            <a
-              href="https://github.com"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Button variant="outline" size="lg" className="h-14 px-8 text-lg">
-                View on GitHub
-              </Button>
-            </a>
           </div>
         </div>
       </section>

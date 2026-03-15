@@ -9,20 +9,23 @@ import {
   Clock,
   User,
   Play,
-  Edit,
   Trash2,
   FileText,
   Video,
   MessageSquare,
   Star,
-  CheckCircle,
-  XCircle,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  Check,
+  Link as LinkIcon,
+  Bot,
+  Users,
+  Share2
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GradientBackground } from "@/components/ui/GradientBackground";
-import { getInterview, deleteInterview, updateInterview } from "@/lib/actions/interviews";
+import { getInterview, deleteInterview } from "@/lib/actions/interviews";
 import { getInterviewQuestions } from "@/lib/actions/questions";
 import { getFeedback, createFeedback } from "@/lib/actions/feedback";
 import type { InterviewWithCandidate, InterviewQuestion, Feedback } from "@/lib/supabase/types";
@@ -44,6 +47,8 @@ export default function InterviewDetailPage() {
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [feedbackData, setFeedbackData] = useState({
     rating: 5,
     recommendation: "hire" as const,
@@ -101,6 +106,22 @@ export default function InterviewDetailPage() {
     }
   };
 
+  const copyLink = (link: string) => {
+    navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const getInterviewLink = () => {
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${baseUrl}/interview/${interviewId}`;
+  };
+
+  const getCandidateLink = () => {
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${baseUrl}/interview/${interviewId}/join`;
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
       weekday: "long",
@@ -115,10 +136,6 @@ export default function InterviewDetailPage() {
       hour: "numeric",
       minute: "2-digit",
     });
-  };
-
-  const isUpcoming = (dateString: string) => {
-    return new Date(dateString) > new Date();
   };
 
   const getInitials = (name: string) => {
@@ -403,6 +420,93 @@ export default function InterviewDetailPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* Start Interview Options */}
+            {(interview.status === "scheduled" || interview.status === "in_progress") && (
+              <GlassCard className="p-6">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Play className="w-5 h-5 text-green-400" /> Start Interview
+                </h2>
+                <div className="space-y-3">
+                  {/* HR/Manual Interview */}
+                  <Link href={`/dashboard/interviews/${interview.id}/session`}>
+                    <Button className="w-full gap-2 h-12">
+                      <Users className="w-5 h-5" />
+                      <div className="text-left">
+                        <div className="font-semibold">HR Interview</div>
+                        <div className="text-xs opacity-70">You ask questions</div>
+                      </div>
+                    </Button>
+                  </Link>
+
+                  {/* AI Interview */}
+                  <Link href={`/dashboard/interviews/${interview.id}/session?mode=ai`}>
+                    <Button variant="secondary" className="w-full gap-2 h-12">
+                      <Bot className="w-5 h-5 text-purple-400" />
+                      <div className="text-left">
+                        <div className="font-semibold">AI Interview</div>
+                        <div className="text-xs opacity-70">AI asks questions</div>
+                      </div>
+                    </Button>
+                  </Link>
+                </div>
+              </GlassCard>
+            )}
+
+            {/* Share Interview Link */}
+            {(interview.status === "scheduled" || interview.status === "in_progress") && (
+              <GlassCard className="p-6">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Share2 className="w-5 h-5 text-blue-400" /> Share Interview
+                </h2>
+                <p className="text-sm text-white/50 mb-4">
+                  Send link to candidate to join the interview
+                </p>
+
+                {/* Candidate Join Link */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-white/50 mb-1 block">Candidate Link</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={getCandidateLink()}
+                        className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/70 truncate"
+                      />
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        onClick={() => copyLink(getCandidateLink())}
+                        className="shrink-0"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-white/50 mb-1 block">Interviewer Link</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={getInterviewLink()}
+                        className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/70 truncate"
+                      />
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        onClick={() => copyLink(getInterviewLink())}
+                        className="shrink-0"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </GlassCard>
+            )}
+
             {/* Candidate Card */}
             <GlassCard className="p-6">
               <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
@@ -432,25 +536,16 @@ export default function InterviewDetailPage() {
               </Link>
             </GlassCard>
 
-            {/* Actions */}
-            <GlassCard className="p-6">
-              <h2 className="text-lg font-bold mb-4">Actions</h2>
-              <div className="space-y-3">
-                {interview.status === "scheduled" && isUpcoming(interview.scheduled_at) && (
-                  <Link href={`/dashboard/interviews/${interview.id}/session`}>
-                    <Button className="w-full gap-2">
-                      <Play className="w-4 h-4" /> Start Interview
-                    </Button>
-                  </Link>
-                )}
-                <Button
-                  variant="secondary"
-                  className="w-full gap-2 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40"
-                  onClick={handleDelete}
-                >
-                  <Trash2 className="w-4 h-4" /> Delete Interview
-                </Button>
-              </div>
+            {/* Danger Zone */}
+            <GlassCard className="p-6 border-red-500/20">
+              <h2 className="text-lg font-bold mb-4 text-red-400">Danger Zone</h2>
+              <Button
+                variant="secondary"
+                className="w-full gap-2 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40"
+                onClick={handleDelete}
+              >
+                <Trash2 className="w-4 h-4" /> Delete Interview
+              </Button>
             </GlassCard>
           </div>
         </div>

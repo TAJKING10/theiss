@@ -37,7 +37,6 @@ export default function Footer() {
               <li><Link href="/research" className="text-white/50 hover:text-white text-sm transition-colors">Publications</Link></li>
               <li><Link href="/research" className="text-white/50 hover:text-white text-sm transition-colors">Methodology</Link></li>
               <li><Link href="/research" className="text-white/50 hover:text-white text-sm transition-colors">Ethics</Link></li>
-              <li><a href="https://github.com" target="_blank" rel="noopener noreferrer" className="text-white/50 hover:text-white text-sm transition-colors">Open Source</a></li>
             </ul>
           </div>
 
@@ -61,9 +60,6 @@ export default function Footer() {
 
           {/* Social Links */}
           <div className="flex items-center gap-6">
-            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white transition-colors" aria-label="GitHub">
-              <Github className="w-5 h-5" />
-            </a>
             <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white transition-colors" aria-label="LinkedIn">
               <Linkedin className="w-5 h-5" />
             </a>

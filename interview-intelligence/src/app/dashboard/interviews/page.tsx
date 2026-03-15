@@ -228,8 +228,8 @@ export default function InterviewsPage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2">
-                    {interview.status === "scheduled" && isUpcoming(interview.scheduled_at) && (
-                      <Link href={`/dashboard/interviews/${interview.id}/session`}>
+                    {(interview.status === "scheduled" || interview.status === "in_progress") && (
+                      <Link href={`/dashboard/interviews/${interview.id}`}>
                         <Button size="sm" className="gap-2">
                           <Play className="w-4 h-4" /> Start
                         </Button>
