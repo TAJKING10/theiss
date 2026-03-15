@@ -26,6 +26,15 @@ export function useInterviews() {
     setIsLoading(true);
     setError(null);
 
+    // Get current user first for security
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setError("Not authenticated");
+      setIsLoading(false);
+      return;
+    }
+
+    // Filter by user_id for security
     const { data, error: fetchError } = await supabase
       .from("interviews")
       .select(`
@@ -36,6 +45,7 @@ export function useInterviews() {
           position
         )
       `)
+      .eq("user_id", user.id)
       .order("scheduled_at", { ascending: false });
 
     if (fetchError) {
@@ -73,10 +83,15 @@ export function useInterviews() {
   };
 
   const updateInterview = async (id: string, updates: InterviewUpdate) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not authenticated");
+
+    // Ensure user owns this interview
     const { data, error } = await supabase
       .from("interviews")
       .update(updates)
       .eq("id", id)
+      .eq("user_id", user.id)
       .select(`
         *,
         candidates (
@@ -95,7 +110,16 @@ export function useInterviews() {
   };
 
   const deleteInterview = async (id: string) => {
-    const { error } = await supabase.from("interviews").delete().eq("id", id);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not authenticated");
+
+    // Ensure user owns this interview
+    const { error } = await supabase
+      .from("interviews")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
+
     if (error) throw new Error(error.message);
     setInterviews((prev) => prev.filter((i) => i.id !== id));
   };
@@ -133,6 +157,16 @@ export function useInterview(id: string) {
   useEffect(() => {
     const fetchInterview = async () => {
       setIsLoading(true);
+
+      // Get current user first for security
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setError("Not authenticated");
+        setIsLoading(false);
+        return;
+      }
+
+      // Filter by user_id for security
       const { data, error: fetchError } = await supabase
         .from("interviews")
         .select(`
@@ -144,6 +178,7 @@ export function useInterview(id: string) {
           )
         `)
         .eq("id", id)
+        .eq("user_id", user.id)
         .single();
 
       if (fetchError) {

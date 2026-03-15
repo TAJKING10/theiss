@@ -26,7 +26,9 @@
       "Bash(findstr:*)",
       "Bash(del \"C:\\\\Users\\\\Toufi\\\\AndroidStudioProjects\\\\theiss\\\\interview-intelligence\\\\.next\\\\dev\\\\lock\")",
       "Bash(powershell -Command:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(xargs cat:*)",
+      "Bash(wc:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

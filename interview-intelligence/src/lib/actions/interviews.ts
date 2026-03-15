@@ -255,3 +255,108 @@ export async function getInterviewStats() {
     totalDurationHours: Math.round(totalDuration / 60),
   };
 }
+
+// Upload recording to Supabase Storage
+export async function uploadInterviewRecording(
+  interviewId: string,
+  recordingBlob: Blob
+): Promise<string> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+
+  // Verify ownership
+  const { data: interview, error: fetchError } = await supabase
+    .from("interviews")
+    .select("id")
+    .eq("id", interviewId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (fetchError || !interview) {
+    throw new Error("Interview not found or unauthorized");
+  }
+
+  // Upload to storage
+  const fileName = `${user.id}/${interviewId}/recording-${Date.now()}.webm`;
+
+  // Convert Blob to ArrayBuffer for server upload
+  const arrayBuffer = await recordingBlob.arrayBuffer();
+  const buffer = new Uint8Array(arrayBuffer);
+
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from("interview-recordings")
+    .upload(fileName, buffer, {
+      contentType: "video/webm",
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Upload failed: ${uploadError.message}`);
+  }
+
+  // Get public URL
+  const { data: urlData } = supabase.storage
+    .from("interview-recordings")
+    .getPublicUrl(fileName);
+
+  const recordingUrl = urlData.publicUrl;
+
+  // Update interview with recording URL
+  await updateInterview(interviewId, { recording_url: recordingUrl });
+
+  return recordingUrl;
+}
+
+// Save interview transcript
+export async function saveInterviewTranscript(
+  interviewId: string,
+  transcript: string
+): Promise<Interview> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+
+  const { data, error } = await supabase
+    .from("interviews")
+    .update({ transcript })
+    .eq("id", interviewId)
+    .eq("user_id", user.id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+// Get interview recording URL
+export async function getInterviewRecording(interviewId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+
+  const { data, error } = await supabase
+    .from("interviews")
+    .select("recording_url")
+    .eq("id", interviewId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data?.recording_url || null;
+}

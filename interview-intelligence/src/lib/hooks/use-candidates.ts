@@ -18,9 +18,19 @@ export function useCandidates() {
     setIsLoading(true);
     setError(null);
 
+    // Get current user first for security
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setError("Not authenticated");
+      setIsLoading(false);
+      return;
+    }
+
+    // Filter by user_id for security
     const { data, error: fetchError } = await supabase
       .from("candidates")
       .select("*")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     if (fetchError) {
@@ -51,10 +61,15 @@ export function useCandidates() {
   };
 
   const updateCandidate = async (id: string, updates: CandidateUpdate) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not authenticated");
+
+    // Ensure user owns this candidate
     const { data, error } = await supabase
       .from("candidates")
       .update(updates)
       .eq("id", id)
+      .eq("user_id", user.id)
       .select()
       .single();
 
@@ -66,7 +81,16 @@ export function useCandidates() {
   };
 
   const deleteCandidate = async (id: string) => {
-    const { error } = await supabase.from("candidates").delete().eq("id", id);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not authenticated");
+
+    // Ensure user owns this candidate
+    const { error } = await supabase
+      .from("candidates")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
+
     if (error) throw new Error(error.message);
     setCandidates((prev) => prev.filter((c) => c.id !== id));
   };
@@ -91,10 +115,21 @@ export function useCandidate(id: string) {
   useEffect(() => {
     const fetchCandidate = async () => {
       setIsLoading(true);
+
+      // Get current user first for security
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setError("Not authenticated");
+        setIsLoading(false);
+        return;
+      }
+
+      // Filter by user_id for security
       const { data, error: fetchError } = await supabase
         .from("candidates")
         .select("*")
         .eq("id", id)
+        .eq("user_id", user.id)
         .single();
 
       if (fetchError) {

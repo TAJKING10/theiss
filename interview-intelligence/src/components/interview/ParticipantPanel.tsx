@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users,
@@ -10,33 +10,21 @@ import {
   Eye,
   EyeOff,
   X,
-  Crown,
-  MessageSquare,
   Mail,
   Link2,
-  Bell,
   ChevronDown,
   ChevronUp,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { cn } from "@/lib/utils";
-
-interface Observer {
-  id: string;
-  name: string;
-  email?: string;
-  role: "hr" | "hiring_manager" | "team_member";
-  isOnline: boolean;
-  joinedAt?: Date;
-  avatar?: string;
-}
+import { useInterviewObservers, type Observer } from "@/hooks/useInterviewObservers";
 
 interface ParticipantPanelProps {
   interviewId: string;
   candidateName: string;
-  observers?: Observer[];
-  onInvite?: (email: string, role: string) => void;
   isHost?: boolean;
   className?: string;
 }
@@ -56,8 +44,6 @@ const roleColors = {
 export function ParticipantPanel({
   interviewId,
   candidateName,
-  observers = [],
-  onInvite,
   isHost = true,
   className = "",
 }: ParticipantPanelProps) {
@@ -65,7 +51,11 @@ export function ParticipantPanel({
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const onlineObservers = observers.filter((o) => o.isOnline);
+  // Use real-time observers hook
+  const { observers, isConnected, onlineCount } = useInterviewObservers({
+    interviewId,
+    enabled: true,
+  });
 
   const copyObserverLink = () => {
     const link = `${window.location.origin}/interview/${interviewId}/observe`;
@@ -85,10 +75,15 @@ export function ParticipantPanel({
           <div className="flex items-center gap-3">
             <Users className="w-5 h-5 text-blue-400" />
             <span className="font-semibold">Participants</span>
-            {onlineObservers.length > 0 && (
+            {onlineCount > 0 && (
               <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs">
-                {onlineObservers.length} watching
+                {onlineCount} watching
               </span>
+            )}
+            {isConnected ? (
+              <Wifi className="w-3 h-3 text-green-400" />
+            ) : (
+              <WifiOff className="w-3 h-3 text-red-400" />
             )}
           </div>
           {isExpanded ? (
@@ -212,7 +207,6 @@ export function ParticipantPanel({
       <InviteModal
         isOpen={showInviteModal}
         onClose={() => setShowInviteModal(false)}
-        onInvite={onInvite}
         interviewId={interviewId}
       />
     </>
@@ -253,34 +247,13 @@ export function ObserverBadge({
 function InviteModal({
   isOpen,
   onClose,
-  onInvite,
   interviewId,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onInvite?: (email: string, role: string) => void;
   interviewId: string;
 }) {
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"hr" | "hiring_manager" | "team_member">("hr");
   const [copied, setCopied] = useState(false);
-  const [sending, setSending] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-
-    setSending(true);
-    try {
-      await onInvite?.(email, role);
-      setEmail("");
-      onClose();
-    } catch (error) {
-      console.error("Failed to send invite:", error);
-    } finally {
-      setSending(false);
-    }
-  };
 
   const copyLink = () => {
     const link = `${window.location.origin}/interview/${interviewId}/observe`;
@@ -343,62 +316,30 @@ function InviteModal({
             </div>
           </div>
 
-          {/* Or Divider */}
-          <div className="flex items-center gap-4 mb-6">
-            <div className="flex-1 h-px bg-white/10" />
-            <span className="text-sm text-white/30">or invite by email</span>
-            <div className="flex-1 h-px bg-white/10" />
-          </div>
-
-          {/* Email Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm text-white/50 mb-2">Email Address</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="colleague@company.com"
-                  className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10
-                    text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50"
-                />
-              </div>
+          {/* Instructions */}
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+              <h3 className="font-medium mb-2">How it works:</h3>
+              <ul className="text-sm text-white/70 space-y-2">
+                <li className="flex gap-2">
+                  <span className="text-blue-400">1.</span>
+                  Share the link with your HR team or hiring managers
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-blue-400">2.</span>
+                  They open the link and enter their name
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-blue-400">3.</span>
+                  They can watch live and take private notes
+                </li>
+              </ul>
             </div>
 
-            <div>
-              <label className="block text-sm text-white/50 mb-2">Role</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(["hr", "hiring_manager", "team_member"] as const).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setRole(r)}
-                    className={cn(
-                      "px-3 py-2 rounded-lg text-sm font-medium transition-all border",
-                      role === r
-                        ? roleColors[r]
-                        : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10"
-                    )}
-                  >
-                    {roleLabels[r]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Button type="submit" className="w-full gap-2" disabled={!email.trim() || sending}>
-              {sending ? (
-                <>Sending...</>
-              ) : (
-                <>
-                  <Mail className="w-4 h-4" />
-                  Send Invitation
-                </>
-              )}
+            <Button onClick={onClose} variant="secondary" className="w-full">
+              Done
             </Button>
-          </form>
+          </div>
 
           {/* Note */}
           <p className="mt-4 text-xs text-white/30 text-center">
