@@ -1,17 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Brain, 
-  Scale, 
-  Link as LinkIcon, 
-  Users, 
-  Cpu, 
-  ShieldCheck, 
-  Zap, 
-  Mic, 
-  Eye, 
+import {
+  Brain,
+  Scale,
+  Link as LinkIcon,
+  Users,
+  Cpu,
+  ShieldCheck,
+  Zap,
+  Mic,
+  Eye,
   BarChart3,
   Slack,
   Video,
@@ -23,15 +23,55 @@ import {
   ChevronRight,
   Info,
   FileText,
-  Plus
+  Plus,
+  User,
+  Save,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GradientBackground } from "@/components/ui/GradientBackground";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"ai" | "bias" | "integration" | "team">("ai");
+  const [activeTab, setActiveTab] = useState<"profile" | "ai" | "bias" | "integration" | "team">("profile");
+
+  // Profile state
+  const [profileData, setProfileData] = useState({ name: "", email: "" });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        setProfileData({
+          name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "",
+          email: user.email || "",
+        });
+      }
+    });
+  }, []);
+
+  const handleSaveProfile = async () => {
+    setProfileSaving(true);
+    setProfileError(null);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({
+        data: { name: profileData.name, full_name: profileData.name },
+      });
+      if (error) throw error;
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2500);
+    } catch (err: any) {
+      setProfileError(err.message || "Failed to save profile");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   // AI Settings State
   const [aiSettings, setAiSettings] = useState({
@@ -57,6 +97,7 @@ export default function SettingsPage() {
   });
 
   const tabs = [
+    { id: "profile", label: "Profile", icon: User },
     { id: "ai", label: "AI Configuration", icon: Brain },
     { id: "bias", label: "Bias Controls", icon: Scale },
     { id: "integration", label: "Integrations", icon: LinkIcon },
@@ -105,6 +146,77 @@ export default function SettingsPage() {
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
           >
+            {/* Profile Tab */}
+            {activeTab === "profile" && (
+              <div className="space-y-8 max-w-xl">
+                <GlassCard className="p-8 space-y-6">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      <User className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold">Profile Settings</h3>
+                      <p className="text-white/40 text-sm">Update your name and account information.</p>
+                    </div>
+                  </div>
+
+                  {/* Avatar */}
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xl font-bold border border-white/10">
+                      {profileData.name ? profileData.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) : "?"}
+                    </div>
+                    <div>
+                      <p className="font-semibold">{profileData.name || "Your Name"}</p>
+                      <p className="text-sm text-white/40">{profileData.email}</p>
+                    </div>
+                  </div>
+
+                  {/* Name */}
+                  <div>
+                    <label className="block text-sm font-medium text-white/70 mb-2">Display Name</label>
+                    <input
+                      type="text"
+                      value={profileData.name}
+                      onChange={(e) => setProfileData(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50 transition-colors"
+                      placeholder="Your name"
+                    />
+                  </div>
+
+                  {/* Email (read-only) */}
+                  <div>
+                    <label className="block text-sm font-medium text-white/70 mb-2">Email Address</label>
+                    <input
+                      type="email"
+                      value={profileData.email}
+                      readOnly
+                      className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white/50 cursor-not-allowed"
+                    />
+                    <p className="text-xs text-white/30 mt-1">Email cannot be changed here.</p>
+                  </div>
+
+                  {profileError && (
+                    <p className="text-red-400 text-sm">{profileError}</p>
+                  )}
+
+                  <Button
+                    onClick={handleSaveProfile}
+                    disabled={profileSaving}
+                    className="gap-2"
+                  >
+                    {profileSaving ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : profileSaved ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-400" />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    {profileSaved ? "Saved!" : "Save Profile"}
+                  </Button>
+                </GlassCard>
+              </div>
+            )}
+
             {/* AI Configuration Tab */}
             {activeTab === "ai" && (
               <div className="space-y-8">
@@ -363,18 +475,20 @@ export default function SettingsPage() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Floating Actions */}
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-50">
-          <GlassCard className="bg-black/80 backdrop-blur-2xl border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center justify-between p-4 px-8">
-            <span className="text-sm font-medium text-white/50 hidden md:block">You have unsaved changes</span>
-            <div className="flex items-center gap-3 w-full md:w-auto">
-              <Button variant="ghost" size="sm" className="flex-1 md:flex-none">Reset</Button>
-              <Button size="md" className="flex-1 md:flex-none px-10 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                Save All Changes
-              </Button>
-            </div>
-          </GlassCard>
-        </div>
+        {/* Floating Actions — only shown for AI/Bias tabs that have toggles */}
+        {(activeTab === "ai" || activeTab === "bias") && (
+          <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-50">
+            <GlassCard className="bg-black/80 backdrop-blur-2xl border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center justify-between p-4 px-8">
+              <span className="text-sm font-medium text-white/50 hidden md:block">You have unsaved changes</span>
+              <div className="flex items-center gap-3 w-full md:w-auto">
+                <Button variant="ghost" size="sm" className="flex-1 md:flex-none">Reset</Button>
+                <Button size="md" className="flex-1 md:flex-none px-10 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                  Save All Changes
+                </Button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
       </div>
     </div>
   );

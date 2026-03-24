@@ -28,7 +28,10 @@
       "Bash(powershell -Command:*)",
       "Bash(npm run build:*)",
       "Bash(xargs cat:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(netstat -ano)",
+      "Bash(cmd /c \"taskkill /PID 5676 /F\")",
+      "Bash(cmd /c \"taskkill /PID 5676 /F 2>nul && echo killed\")"
     ]
   },
   "enableAllProjectMcpServers": true,

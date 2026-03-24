@@ -101,7 +101,7 @@ export function useInterviewObservers({
         setObservers(uniqueObservers);
       })
       .on("presence", { event: "join" }, ({ newPresences }) => {
-        const newObservers = newPresences as Observer[];
+        const newObservers = (newPresences as unknown) as Observer[];
         setObservers((prev) => {
           const updated = [...prev];
           newObservers.forEach((observer) => {
@@ -116,7 +116,7 @@ export function useInterviewObservers({
         });
       })
       .on("presence", { event: "leave" }, ({ leftPresences }) => {
-        const leftIds = (leftPresences as Observer[]).map((o) => o.id);
+        const leftIds = ((leftPresences as unknown) as Observer[]).map((o) => o.id);
         setObservers((prev) =>
           prev.map((o) =>
             leftIds.includes(o.id) ? { ...o, isOnline: false } : o

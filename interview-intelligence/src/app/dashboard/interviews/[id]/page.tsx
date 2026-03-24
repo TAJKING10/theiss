@@ -20,7 +20,13 @@ import {
   Link as LinkIcon,
   Bot,
   Users,
-  Share2
+  Share2,
+  ThumbsUp,
+  ThumbsDown,
+  Award,
+  Brain,
+  CheckCircle,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -49,6 +55,8 @@ export default function InterviewDetailPage() {
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [recordingSignedUrl, setRecordingSignedUrl] = useState<string | null>(null);
+  const [auditLog, setAuditLog] = useState<Array<{ time: string; event: string; type: string }>>([]);
   const [feedbackData, setFeedbackData] = useState({
     rating: 5,
     recommendation: "hire" as const,
@@ -71,6 +79,30 @@ export default function InterviewDetailPage() {
       setInterview(interviewData);
       setQuestions(questionsData);
       setFeedback(feedbackData);
+
+      // Fetch signed recording URL if interview is completed and has recording
+      if (interviewData?.status === "completed" && interviewData.recording_url) {
+        try {
+          const res = await fetch(`/api/interviews/${interviewId}/recording`);
+          if (res.ok) {
+            const data = await res.json();
+            setRecordingSignedUrl(data.url);
+          }
+        } catch {
+          // Non-fatal: recording URL unavailable
+        }
+      }
+
+      // Fetch audit log
+      try {
+        const auditRes = await fetch(`/api/audit?interviewId=${interviewId}&format=summary`);
+        if (auditRes.ok) {
+          const auditData = await auditRes.json();
+          setAuditLog(auditData.timeline || []);
+        }
+      } catch {
+        // Non-fatal: audit log unavailable
+      }
     } catch (error) {
       console.error("Failed to load interview:", error);
     } finally {
@@ -266,14 +298,140 @@ export default function InterviewDetailPage() {
                       ) : (
                         <p className="text-white/30 text-sm pl-6 italic">No answer recorded</p>
                       )}
-                      {q.score && (
-                        <div className="mt-2 pl-6 flex items-center gap-2">
-                          <span className="text-xs text-white/50">Score:</span>
-                          <span className={`text-xs font-medium ${q.score >= 80 ? "text-green-400" : q.score >= 60 ? "text-yellow-400" : "text-red-400"}`}>
-                            {q.score}%
-                          </span>
+                      {q.score != null && (
+                        <div className="mt-3 pl-6 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-white/50">Score:</span>
+                            <span className={`text-xs font-bold ${q.score >= 80 ? "text-green-400" : q.score >= 60 ? "text-yellow-400" : "text-red-400"}`}>
+                              {q.score}%
+                            </span>
+                            <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden max-w-[120px]">
+                              <div
+                                className={`h-full rounded-full ${q.score >= 80 ? "bg-green-500" : q.score >= 60 ? "bg-yellow-500" : "bg-red-500"}`}
+                                style={{ width: `${q.score}%` }}
+                              />
+                            </div>
+                          </div>
+                          {/* Competency breakdown from AI evaluation */}
+                          {(q.ai_evaluation as any)?.competencies?.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-1">
+                              {((q.ai_evaluation as any).competencies as Array<{ competency: string; score: number; level: string }>).map((c) => (
+                                <span key={c.competency} className="text-xs px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/60">
+                                  {c.competency}: <span className={c.score >= 80 ? "text-green-400" : c.score >= 60 ? "text-yellow-400" : "text-red-400"}>{c.score}%</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
+                    </div>
+                  ))}
+                </div>
+              </GlassCard>
+            )}
+
+            {/* AI Results — shown when interview is completed */}
+            {interview.status === "completed" && (() => {
+              const insights = interview.ai_insights as Record<string, any> | null;
+              const aiFeedback = insights?.feedback as { strengths?: string[]; improvements?: string[]; summary?: string } | null;
+              const aiRecommendation = insights?.recommendation as string | null;
+              const recommendationColor =
+                aiRecommendation === "approved" ? "text-green-400" :
+                aiRecommendation === "review" ? "text-yellow-400" : "text-red-400";
+              const recommendationBg =
+                aiRecommendation === "approved" ? "bg-green-500/10 border-green-500/20" :
+                aiRecommendation === "review" ? "bg-yellow-500/10 border-yellow-500/20" : "bg-red-500/10 border-red-500/20";
+              return (
+                <GlassCard className={`p-6 border ${recommendationBg}`}>
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <Brain className="w-5 h-5 text-purple-400" /> AI Evaluation Results
+                  </h2>
+
+                  {/* Score + Recommendation */}
+                  <div className="flex items-center gap-6 mb-6">
+                    {interview.score != null && (
+                      <div className="text-center">
+                        <div className={`text-5xl font-bold ${
+                          interview.score >= 80 ? "text-green-400" :
+                          interview.score >= 60 ? "text-yellow-400" : "text-red-400"
+                        }`}>{interview.score}%</div>
+                        <p className="text-sm text-white/50 mt-1">Overall Score</p>
+                      </div>
+                    )}
+                    {aiRecommendation && (
+                      <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border ${recommendationBg}`}>
+                        {aiRecommendation === "approved" ? <ThumbsUp className="w-5 h-5 text-green-400" /> :
+                         aiRecommendation === "review" ? <Award className="w-5 h-5 text-yellow-400" /> :
+                         <ThumbsDown className="w-5 h-5 text-red-400" />}
+                        <span className={`font-semibold capitalize ${recommendationColor}`}>
+                          {aiRecommendation === "approved" ? "Approved" :
+                           aiRecommendation === "review" ? "Under Review" : "Not Recommended"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* AI Summary */}
+                  {aiFeedback?.summary && (
+                    <div className="mb-5 p-4 rounded-xl bg-white/5">
+                      <p className="text-white/80 text-sm leading-relaxed">{aiFeedback.summary}</p>
+                    </div>
+                  )}
+
+                  {/* Strengths & Improvements */}
+                  {(aiFeedback?.strengths?.length || aiFeedback?.improvements?.length) ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {aiFeedback?.strengths && aiFeedback.strengths.length > 0 && (
+                        <div>
+                          <h3 className="text-sm font-semibold text-green-400 mb-3 flex items-center gap-2">
+                            <CheckCircle className="w-4 h-4" /> Strengths
+                          </h3>
+                          <ul className="space-y-2">
+                            {aiFeedback.strengths.map((s: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-white/70">
+                                <span className="text-green-400 mt-0.5">•</span>{s}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {aiFeedback?.improvements && aiFeedback.improvements.length > 0 && (
+                        <div>
+                          <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                            <TrendingUp className="w-4 h-4" /> Areas for Improvement
+                          </h3>
+                          <ul className="space-y-2">
+                            {aiFeedback.improvements.map((imp: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-white/70">
+                                <span className="text-yellow-400 mt-0.5">•</span>{imp}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </GlassCard>
+              );
+            })()}
+
+            {/* Audit Trail */}
+            {auditLog.length > 0 && (
+              <GlassCard className="p-6">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-400" /> Audit Trail
+                </h2>
+                <div className="space-y-2">
+                  {auditLog.map((entry, i) => (
+                    <div key={i} className="flex items-start gap-3 text-sm">
+                      <span className="text-white/30 font-mono text-xs shrink-0 pt-0.5 w-16">{entry.time}</span>
+                      <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                        entry.type === "ai_evaluation" ? "bg-purple-400" :
+                        entry.type === "interview_started" ? "bg-blue-400" :
+                        entry.type === "interview_completed" ? "bg-green-400" :
+                        entry.type === "human_override" ? "bg-yellow-400" : "bg-white/30"
+                      }`} />
+                      <span className="text-white/70">{entry.event}</span>
                     </div>
                   ))}
                 </div>
@@ -504,6 +662,45 @@ export default function InterviewDetailPage() {
                     </div>
                   </div>
                 </div>
+              </GlassCard>
+            )}
+
+            {/* Recording */}
+            {interview.status === "completed" && interview.recording_url && (
+              <GlassCard className="p-6">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Video className="w-5 h-5 text-blue-400" /> Recording
+                </h2>
+                <p className="text-sm text-white/50 mb-3">Interview recording available</p>
+                {recordingSignedUrl ? (
+                  <a
+                    href={recordingSignedUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full"
+                  >
+                    <Button variant="secondary" className="w-full gap-2">
+                      <Play className="w-4 h-4" /> Play Recording
+                    </Button>
+                  </a>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    className="w-full gap-2"
+                    onClick={async () => {
+                      const res = await fetch(`/api/interviews/${interviewId}/recording`);
+                      if (res.ok) {
+                        const data = await res.json();
+                        if (data.url) {
+                          setRecordingSignedUrl(data.url);
+                          window.open(data.url, "_blank");
+                        }
+                      }
+                    }}
+                  >
+                    <Play className="w-4 h-4" /> Load Recording
+                  </Button>
+                )}
               </GlassCard>
             )}
 

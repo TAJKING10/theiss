@@ -55,6 +55,7 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: []
       }
       feedback: {
         Row: {
@@ -90,6 +91,7 @@ export type Database = {
           strengths?: string[] | null
           user_id?: string
         }
+        Relationships: []
       }
       interview_questions: {
         Row: {
@@ -125,6 +127,7 @@ export type Database = {
           question?: string
           score?: number | null
         }
+        Relationships: []
       }
       interviews: {
         Row: {
@@ -175,6 +178,15 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "interviews_candidate_id_fkey"
+            columns: ["candidate_id"]
+            isOneToOne: false
+            referencedRelation: "candidates"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       profiles: {
         Row: {
@@ -201,6 +213,7 @@ export type Database = {
           name?: string
           updated_at?: string | null
         }
+        Relationships: []
       }
     }
     Views: {
@@ -210,6 +223,9 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
       [_ in never]: never
     }
   }

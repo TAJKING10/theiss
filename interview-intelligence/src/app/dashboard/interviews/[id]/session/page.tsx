@@ -37,6 +37,7 @@ import {
   SkipForward,
   HelpCircle,
   Users,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -127,7 +128,19 @@ export default function InterviewSessionPage() {
   // Interview stage
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [currentAnswer, setCurrentAnswer] = useState("");
-  const [answers, setAnswers] = useState<{ question: string; answer: string; score: number }[]>([]);
+  const [answers, setAnswers] = useState<{
+    question: string;
+    answer: string;
+    score: number;
+    competencies?: Array<{
+      competency: string;
+      score: number;
+      level: string;
+      evidence: string[];
+      reasoning: string;
+    }>;
+    confidence?: number;
+  }[]>([]);
   const [duration, setDuration] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
@@ -158,6 +171,22 @@ export default function InterviewSessionPage() {
     summary: string;
   } | null>(null);
 
+  // Human Override State
+  const [humanOverride, setHumanOverride] = useState<{
+    enabled: boolean;
+    decision: "approved" | "rejected" | "review" | null;
+    notes: string;
+    overriddenBy: string;
+    overriddenAt: Date | null;
+  }>({
+    enabled: false,
+    decision: null,
+    notes: "",
+    overriddenBy: "",
+    overriddenAt: null,
+  });
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const emotionIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -167,6 +196,16 @@ export default function InterviewSessionPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const [isRecording, setIsRecording] = useState(false);
+
+  // Callback ref to connect stream when video element mounts
+  const setVideoRef = useCallback((element: HTMLVideoElement | null) => {
+    if (element && streamRef.current) {
+      element.srcObject = streamRef.current;
+      element.play().catch(e => console.error("Video autoplay error:", e));
+    }
+    // Also update the regular ref for other uses
+    (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = element;
+  }, []);
 
   // Speech hooks
   const {
@@ -182,6 +221,12 @@ export default function InterviewSessionPage() {
 
   const { isSpeaking, speak, stop: stopSpeaking, isSupported: ttsSupported } = useTextToSpeech();
 
+  // Ref to avoid stale closure in speakText - avoids cascade recreations when isListening changes
+  const listeningRef = useRef(false);
+  useEffect(() => {
+    listeningRef.current = isListening;
+  }, [isListening]);
+
   // Memoize the full transcript to prevent unnecessary re-renders
   const fullTranscript = useMemo(() => {
     return (transcript + " " + interimTranscript).trim();
@@ -192,11 +237,54 @@ export default function InterviewSessionPage() {
     setAiInsights(prev => [message, ...prev].slice(0, 8));
   }, []);
 
+  // Helper function - logAuditEvent (for compliance logging)
+  const logAuditEvent = useCallback(async (
+    action: string,
+    data: Record<string, unknown>
+  ) => {
+    try {
+      await fetch("/api/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          interviewId,
+          candidateId: interview?.candidate?.id,
+          data,
+        }),
+      });
+    } catch (error) {
+      console.error("Audit log error:", error);
+    }
+  }, [interviewId, interview?.candidate?.id]);
+
+  // Helper function - save human override to database
+  const saveHumanOverride = useCallback(async (decision: string, notes: string) => {
+    try {
+      await updateInterview(interviewId, {
+        ai_insights: {
+          ...(interview?.ai_insights as Record<string, unknown> | null),
+          humanOverride: {
+            enabled: true,
+            decision,
+            notes,
+            overriddenBy: "Current User",
+            overriddenAt: new Date().toISOString(),
+          },
+        } as import("@/lib/supabase/types").Json,
+      });
+    } catch (error) {
+      console.error("Failed to save human override:", error);
+    }
+  }, [interviewId, interview?.ai_insights]);
+
   // Helper function - speakText
+  // Uses listeningRef instead of isListening state to avoid stale closures
+  // and prevent cascade recreations of all dependent callbacks on every isListening change
   const speakText = useCallback((text: string, onDone?: () => void) => {
     if (aiSpeechEnabled && ttsSupported) {
-      // Stop listening while AI speaks
-      if (isListening) {
+      // Stop listening while AI speaks - use ref to read current value without dep
+      if (listeningRef.current) {
         stopListening();
       }
 
@@ -207,7 +295,7 @@ export default function InterviewSessionPage() {
       // If speech disabled, call callback immediately
       setTimeout(onDone, 1000);
     }
-  }, [aiSpeechEnabled, ttsSupported, speak, isListening, stopListening]);
+  }, [aiSpeechEnabled, ttsSupported, speak, stopListening]);
 
   // Update AI state - simplified to prevent loops
   useEffect(() => {
@@ -231,8 +319,14 @@ export default function InterviewSessionPage() {
     }
   }, [fullTranscript]);
 
-  // Ref-based approach to avoid circular dependencies
+  // Ref-based approach to avoid circular dependencies and TDZ issues with useCallback ordering
   const autoSubmitRef = useRef<() => void>(() => {});
+  const commandHandlersRef = useRef({
+    repeat: () => {},
+    skip: () => {},
+    goBack: () => {},
+    clarify: () => {},
+  });
 
   // Auto-submit countdown timer (separate effect for cleaner logic)
   useEffect(() => {
@@ -272,7 +366,7 @@ export default function InterviewSessionPage() {
     };
   }, [currentAnswer, interviewPhase]);
 
-  // SMART VOICE COMMAND DETECTION - Check for commands in real-time
+  // SMART VOICE COMMAND DETECTION - uses commandHandlersRef to avoid TDZ issues
   useEffect(() => {
     if (!fullTranscript || isProcessingCommand || commandCooldownRef.current || interviewPhase !== "listening") {
       return;
@@ -288,20 +382,12 @@ export default function InterviewSessionPage() {
 
       console.log("Voice command detected:", command, "from:", fullTranscript);
 
-      // Execute the command
+      // Execute via ref to avoid TDZ issues with callback declaration order
       switch (command) {
-        case "repeat":
-          handleRepeatQuestion();
-          break;
-        case "skip":
-          handleSkipQuestion();
-          break;
-        case "goBack":
-          handleGoBack();
-          break;
-        case "clarify":
-          handleClarifyQuestion();
-          break;
+        case "repeat": commandHandlersRef.current.repeat(); break;
+        case "skip": commandHandlersRef.current.skip(); break;
+        case "goBack": commandHandlersRef.current.goBack(); break;
+        case "clarify": commandHandlersRef.current.clarify(); break;
       }
 
       // Reset cooldown after 3 seconds
@@ -350,6 +436,29 @@ export default function InterviewSessionPage() {
       if (emotionIntervalRef.current) clearInterval(emotionIntervalRef.current);
     };
   }, [stage, cameraReady]);
+
+  // Reconnect video stream when entering interview stage
+  useEffect(() => {
+    if (stage === "interview" && streamRef.current && videoRef.current) {
+      // Small delay to ensure DOM is updated after stage change
+      const connectVideo = async () => {
+        if (videoRef.current && streamRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+          try {
+            await videoRef.current.play();
+          } catch (e) {
+            console.error("Video play error:", e);
+          }
+        }
+      };
+
+      // Try immediately and also after a short delay
+      connectVideo();
+      const timeout = setTimeout(connectVideo, 100);
+
+      return () => clearTimeout(timeout);
+    }
+  }, [stage]);
 
   const loadData = async () => {
     try {
@@ -505,29 +614,48 @@ export default function InterviewSessionPage() {
     }
   }, [addInsight]);
 
-  // Evaluate answer function
-  const evaluateAnswer = useCallback(async (question: string, answer: string): Promise<number> => {
+  // Evaluate answer function using competency-based rubric
+  // Returns rubric evaluation with competency breakdown
+  const evaluateAnswer = useCallback(async (question: string, answer: string, questionIdx: number): Promise<{
+    score: number;
+    competencies?: Array<{
+      competency: string;
+      score: number;
+      level: string;
+      evidence: string[];
+      reasoning: string;
+    }>;
+    confidence?: number;
+    limitations?: string[];
+  }> => {
     try {
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "evaluateAnswer",
+          action: "evaluateAnswerWithRubric",
           question,
           answer,
           position: interview?.candidate?.position || "",
+          questionIndex: questionIdx,
+          totalQuestions: questions.length,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        return data.score || 70;
+        return {
+          score: data.overallScore || 70,
+          competencies: data.competencies,
+          confidence: data.confidence,
+          limitations: data.limitations,
+        };
       }
     } catch (error) {
       console.error("Evaluation error:", error);
     }
-    return Math.floor(Math.random() * 30) + 60;
-  }, [interview?.candidate?.position]);
+    return { score: Math.floor(Math.random() * 30) + 60 };
+  }, [interview?.candidate?.position, questions.length]);
 
   // Ask question by explicit index - defined early to avoid circular deps
   const askQuestion = useCallback((index: number) => {
@@ -571,26 +699,47 @@ export default function InterviewSessionPage() {
     });
   }, [interview?.candidate?.name, stopListening, speakText, isRecording, stopRecording]);
 
-  // Process and evaluate answer
+  // Process and evaluate answer using competency-based rubric
   const processAnswer = useCallback(async (questionIndex: number, answer: string) => {
-    const score = await evaluateAnswer(questions[questionIndex]?.question || "", answer);
+    const evaluation = await evaluateAnswer(questions[questionIndex]?.question || "", answer, questionIndex);
 
     setAnswers(prev => [...prev, {
       question: questions[questionIndex]?.question || "",
       answer: answer,
-      score,
+      score: evaluation.score,
+      competencies: evaluation.competencies,
+      confidence: evaluation.confidence,
     }]);
 
     if (questions[questionIndex]) {
-      await answerQuestion(questions[questionIndex].id, answer, { score }, score);
+      await answerQuestion(questions[questionIndex].id, answer, {
+        score: evaluation.score,
+        competencies: evaluation.competencies,
+        confidence: evaluation.confidence,
+      }, evaluation.score);
     }
 
-    setIsEvaluating(false);
-    addInsight(`Answer scored: ${score}%`);
+    // Log AI evaluation for audit
+    logAuditEvent("ai_evaluation", {
+      questionIndex,
+      question: questions[questionIndex]?.question || "",
+      answerLength: answer.length,
+      overallScore: evaluation.score,
+      competencies: evaluation.competencies?.map(c => ({
+        competency: c.competency,
+        score: c.score,
+        level: c.level,
+      })) || [],
+      confidence: evaluation.confidence || 0,
+      scoringMethodology: "competency-based rubric",
+    });
 
-    const feedbackText = score >= 80
+    setIsEvaluating(false);
+    addInsight(`Answer scored: ${evaluation.score}%`);
+
+    const feedbackText = evaluation.score >= 80
       ? "Excellent answer! That was really well thought out."
-      : score >= 60
+      : evaluation.score >= 60
         ? "Good answer, thank you for sharing that."
         : "Thank you for your response.";
 
@@ -653,6 +802,13 @@ export default function InterviewSessionPage() {
     const greeting = `Hello ${interview?.candidate?.name || ""}! Welcome to your interview for the ${interview?.candidate?.position || "position"} role. I'm Sarah, your AI interviewer. I'll be asking you ${questions.length} questions today. Take your time with each answer. Your answer will be automatically submitted after a few seconds of silence. You can also say "repeat the question" anytime. Ready? Let's begin!`;
 
     addInsight("Interview started");
+
+    // Log audit event for interview start
+    logAuditEvent("interview_started", {
+      candidateName: interview?.candidate?.name || "",
+      position: interview?.candidate?.position || "",
+      totalQuestions: questions.length,
+    });
 
     speakText(greeting, () => {
       // After greeting, ask first question (index 0)
@@ -764,6 +920,16 @@ export default function InterviewSessionPage() {
     });
   }, [currentQuestionIndex, questions, stopListening, resetTranscript, speakText, startListening, addInsight]);
 
+  // Keep commandHandlersRef in sync with the latest callback implementations
+  useEffect(() => {
+    commandHandlersRef.current = {
+      repeat: handleRepeatQuestion,
+      skip: handleSkipQuestion,
+      goBack: handleGoBack,
+      clarify: handleClarifyQuestion,
+    };
+  });
+
   const handleDoneAnswering = () => {
     // Check if it's actually a command, not a real answer
     const command = detectVoiceCommand(currentAnswer);
@@ -814,16 +980,19 @@ export default function InterviewSessionPage() {
     setIsEvaluating(true);
 
     const questionIndex = currentQuestionIndex;
-    const score = await evaluateAnswer(
+    const evaluation = await evaluateAnswer(
       questions[questionIndex].question,
-      currentAnswer
+      currentAnswer,
+      questionIndex
     );
 
-    // Save answer
+    // Save answer with competency data
     const newAnswer = {
       question: questions[questionIndex].question,
       answer: currentAnswer,
-      score,
+      score: evaluation.score,
+      competencies: evaluation.competencies,
+      confidence: evaluation.confidence,
     };
     setAnswers(prev => [...prev, newAnswer]);
 
@@ -831,20 +1000,24 @@ export default function InterviewSessionPage() {
     await answerQuestion(
       questions[questionIndex].id,
       currentAnswer,
-      { score },
-      score
+      {
+        score: evaluation.score,
+        competencies: evaluation.competencies,
+        confidence: evaluation.confidence,
+      },
+      evaluation.score
     );
 
     setIsEvaluating(false);
 
-    // Generate feedback
-    const feedbackText = score >= 80
+    // Generate feedback based on competency score
+    const feedbackText = evaluation.score >= 80
       ? "Excellent answer! That was really well thought out."
-      : score >= 60
+      : evaluation.score >= 60
         ? "Good answer, thank you for sharing that."
         : "Thank you for your response.";
 
-    addInsight(`Answer scored: ${score}%`);
+    addInsight(`Answer scored: ${evaluation.score}%`);
 
     speakText(feedbackText, () => {
       resetTranscript();
@@ -868,14 +1041,24 @@ export default function InterviewSessionPage() {
     stopSpeaking();
     stopCamera();
 
-    // Calculate final score
+    // Calculate final score - TRANSCRIPT-BASED ONLY
+    // Note: Face/emotion metrics are collected for RESEARCH TELEMETRY ONLY
+    // They are NOT used in hiring recommendations per EU AI Act compliance
     const answeredQuestions = answers.filter(a => a.score > 0);
     const avgScore = answeredQuestions.length > 0
       ? Math.round(answeredQuestions.reduce((sum, a) => sum + a.score, 0) / answeredQuestions.length)
       : 70;
 
-    const metricsAvg = Math.round((metrics.confidence + metrics.engagement + metrics.clarity) / 3);
-    const final = Math.round((avgScore * 0.7) + (metricsAvg * 0.3));
+    // Face metrics stored for research analysis only - excluded from final score
+    const researchTelemetry = {
+      confidence: Math.round(metrics.confidence),
+      engagement: Math.round(metrics.engagement),
+      clarity: Math.round(metrics.clarity),
+      note: "Research telemetry only - not used in hiring recommendation"
+    };
+
+    // Final score is 100% based on answer quality (transcript evidence)
+    const final = avgScore;
 
     setFinalScore(final);
 
@@ -888,7 +1071,13 @@ export default function InterviewSessionPage() {
       setRecommendation("rejected");
     }
 
-    // Generate AI feedback
+    // Generate AI feedback — capture in local var so we can persist it
+    let feedbackResult = {
+      strengths: ["Good communication skills", "Showed enthusiasm"],
+      improvements: ["Could provide more specific examples"],
+      summary: `Overall score: ${final}%. ${final >= 80 ? "Strong candidate." : final >= 60 ? "Promising candidate." : "Needs development."}`,
+    };
+
     try {
       const response = await fetch("/api/ai", {
         method: "POST",
@@ -905,19 +1094,17 @@ export default function InterviewSessionPage() {
 
       if (response.ok) {
         const data = await response.json();
-        setFeedback({
-          strengths: data.strengths || ["Good communication", "Relevant experience"],
-          improvements: data.improvements || ["Provide more examples"],
-          summary: data.summary || `Overall score: ${final}%.`,
-        });
+        feedbackResult = {
+          strengths: data.strengths || feedbackResult.strengths,
+          improvements: data.improvements || feedbackResult.improvements,
+          summary: data.summary || feedbackResult.summary,
+        };
       }
     } catch (error) {
-      setFeedback({
-        strengths: ["Good communication skills", "Showed enthusiasm"],
-        improvements: ["Could provide more specific examples"],
-        summary: `Overall score: ${final}%. ${final >= 80 ? "Strong candidate." : final >= 60 ? "Promising candidate." : "Needs development."}`,
-      });
+      // Use default feedbackResult already set above
     }
+
+    setFeedback(feedbackResult);
 
     // Generate transcript from answers
     const transcript = answers.map((a, i) =>
@@ -931,18 +1118,37 @@ export default function InterviewSessionPage() {
       console.error("Failed to save transcript:", error);
     }
 
-    // Save to database
+    // Save to database — includes feedback so results page can display it
     await completeInterview(interviewId, final, notes, {
       duration,
       questionsAnswered: answers.length,
-      avgConfidence: Math.round(metrics.confidence),
-      avgEngagement: Math.round(metrics.engagement),
-      avgClarity: Math.round(metrics.clarity),
       answers: answers,
+      feedback: feedbackResult,
+      recommendation: final >= 80 ? "approved" : final >= 60 ? "review" : "rejected",
+      // Research telemetry - NOT used in scoring/recommendation
+      researchTelemetry: {
+        ...researchTelemetry,
+        disclaimer: "Video-based metrics collected for research analysis only. Not used in hiring recommendation per EU AI Act high-risk employment AI guidelines."
+      },
+      scoringMethodology: {
+        version: "1.0",
+        method: "transcript-based rubric scoring",
+        faceMetricsUsed: false,
+        humanOversightRequired: true
+      }
+    });
+
+    // Log interview completion for audit
+    logAuditEvent("interview_completed", {
+      duration,
+      questionsAnswered: answers.length,
+      totalQuestions: questions.length,
+      aiScore: final,
+      aiRecommendation: final >= 80 ? "approved" : final >= 60 ? "review" : "rejected",
     });
 
     setStage("completed");
-  }, [stopListening, stopSpeaking, answers, metrics, interview?.candidate?.name, interview?.candidate?.position, duration, notes, interviewId]);
+  }, [stopListening, stopSpeaking, answers, metrics, interview?.candidate?.name, interview?.candidate?.position, duration, notes, interviewId, questions.length, logAuditEvent]);
 
   // Update the ref when finishInterview changes
   useEffect(() => {
@@ -1036,7 +1242,7 @@ export default function InterviewSessionPage() {
 
               <div className="aspect-video bg-black rounded-xl overflow-hidden relative mb-4">
                 <video
-                  ref={videoRef}
+                  ref={setVideoRef}
                   autoPlay
                   playsInline
                   muted
@@ -1385,7 +1591,7 @@ export default function InterviewSessionPage() {
                   {/* Candidate Video Panel */}
                   <div className="relative aspect-video bg-black">
                     <video
-                      ref={videoRef}
+                      ref={setVideoRef}
                       autoPlay
                       playsInline
                       muted
@@ -1770,20 +1976,97 @@ export default function InterviewSessionPage() {
             </div>
           </div>
 
-          {/* Metrics */}
-          <div className="grid grid-cols-3 gap-6 mb-8">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-400">{Math.round(metrics.confidence)}%</div>
-              <div className="text-white/50 text-sm">Confidence</div>
+          {/* Scoring Methodology Notice */}
+          <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 mb-6">
+            <div className="flex items-center gap-2 text-blue-300 text-sm">
+              <Info className="w-4 h-4" />
+              <span>Score based on transcript analysis only. Human oversight required for final decision.</span>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-400">{Math.round(metrics.engagement)}%</div>
-              <div className="text-white/50 text-sm">Engagement</div>
+          </div>
+
+          {/* Competency Breakdown - The main scoring */}
+          {answers.some(a => a.competencies && a.competencies.length > 0) && (
+            <div className="mb-8">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Activity className="w-5 h-5 text-blue-400" />
+                Competency Breakdown
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                {(() => {
+                  // Aggregate competency scores across all answers
+                  const competencyAggregates: Record<string, { scores: number[]; level: string }> = {};
+                  answers.forEach(a => {
+                    if (a.competencies) {
+                      a.competencies.forEach(c => {
+                        if (!competencyAggregates[c.competency]) {
+                          competencyAggregates[c.competency] = { scores: [], level: "" };
+                        }
+                        competencyAggregates[c.competency].scores.push(c.score);
+                      });
+                    }
+                  });
+
+                  return Object.entries(competencyAggregates).map(([name, data]) => {
+                    const avgScore = data.scores.length > 0
+                      ? Math.round(data.scores.reduce((a, b) => a + b, 0) / data.scores.length)
+                      : 0;
+                    const level = avgScore >= 85 ? "Expert" : avgScore >= 70 ? "Proficient" : avgScore >= 50 ? "Developing" : "Novice";
+                    const color = avgScore >= 85 ? "text-green-400" : avgScore >= 70 ? "text-blue-400" : avgScore >= 50 ? "text-yellow-400" : "text-red-400";
+                    const bgColor = avgScore >= 85 ? "bg-green-500/20" : avgScore >= 70 ? "bg-blue-500/20" : avgScore >= 50 ? "bg-yellow-500/20" : "bg-red-500/20";
+
+                    return (
+                      <div key={name} className="p-4 rounded-xl bg-white/5">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium">{name}</span>
+                          <span className={cn("px-2 py-0.5 rounded text-xs", bgColor, color)}>
+                            {level}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                              className={cn("h-full rounded-full", bgColor)}
+                              style={{ width: `${avgScore}%` }}
+                            />
+                          </div>
+                          <span className={cn("text-sm font-bold", color)}>{avgScore}%</span>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              <p className="text-center text-white/30 text-xs mt-3">
+                Based on transcript evidence across {answers.length} responses
+              </p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-purple-400">{Math.round(metrics.clarity)}%</div>
-              <div className="text-white/50 text-sm">Clarity</div>
+          )}
+
+          {/* Research Telemetry - NOT used in scoring */}
+          <div className="mb-8">
+            <div className="flex items-center justify-center gap-2 mb-3">
+              <span className="text-white/30 text-xs uppercase tracking-wider">Research Telemetry</span>
+              <span className="px-2 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                Not Used in Score
+              </span>
             </div>
+            <div className="grid grid-cols-3 gap-6">
+              <div className="text-center opacity-60">
+                <div className="text-xl font-bold text-blue-400/70">{Math.round(metrics.confidence)}%</div>
+                <div className="text-white/30 text-sm">Confidence</div>
+              </div>
+              <div className="text-center opacity-60">
+                <div className="text-xl font-bold text-green-400/70">{Math.round(metrics.engagement)}%</div>
+                <div className="text-white/30 text-sm">Engagement</div>
+              </div>
+              <div className="text-center opacity-60">
+                <div className="text-xl font-bold text-purple-400/70">{Math.round(metrics.clarity)}%</div>
+                <div className="text-white/30 text-sm">Clarity</div>
+              </div>
+            </div>
+            <p className="text-center text-white/20 text-xs mt-2">
+              Video metrics collected for research analysis only per EU AI Act guidelines
+            </p>
           </div>
 
           {/* Summary */}
@@ -1819,11 +2102,11 @@ export default function InterviewSessionPage() {
           )}
         </GlassCard>
 
-        {/* Answers Review */}
+        {/* Answers Review with Competency Evidence */}
         {answers.length > 0 && (
           <GlassCard className="p-6 mb-6">
-            <h3 className="font-bold mb-4">Question & Answer Review</h3>
-            <div className="space-y-4 max-h-[400px] overflow-y-auto">
+            <h3 className="font-bold mb-4">Question & Answer Review with Evidence</h3>
+            <div className="space-y-4 max-h-[500px] overflow-y-auto">
               {answers.map((a, i) => (
                 <div key={i} className="p-4 rounded-lg bg-white/5">
                   <div className="flex items-start justify-between mb-2">
@@ -1838,7 +2121,49 @@ export default function InterviewSessionPage() {
                       {a.score === 0 ? "Skipped" : `${a.score}%`}
                     </span>
                   </div>
-                  <p className="text-white/70 text-sm">{a.answer}</p>
+                  <p className="text-white/70 text-sm mb-3">{a.answer}</p>
+
+                  {/* Competency scores for this answer */}
+                  {a.competencies && a.competencies.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-white/10">
+                      <div className="text-xs text-white/40 mb-2 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" /> Competency Analysis
+                        {a.confidence && (
+                          <span className="ml-auto text-white/30">
+                            AI Confidence: {a.confidence}%
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {a.competencies.map((c, ci) => (
+                          <div key={ci} className="text-xs p-2 rounded bg-white/5">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-white/60">{c.competency}</span>
+                              <span className={cn(
+                                "font-medium",
+                                c.score >= 80 ? "text-green-400" :
+                                  c.score >= 60 ? "text-blue-400" :
+                                    c.score >= 40 ? "text-yellow-400" :
+                                      "text-red-400"
+                              )}>
+                                {c.score}%
+                              </span>
+                            </div>
+                            {/* Evidence quotes */}
+                            {c.evidence && c.evidence.length > 0 && (
+                              <div className="mt-1">
+                                {c.evidence.slice(0, 1).map((e, ei) => (
+                                  <p key={ei} className="text-white/30 italic text-[10px] truncate">
+                                    "{e}"
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1872,19 +2197,278 @@ export default function InterviewSessionPage() {
           </div>
         </GlassCard>
 
-        {/* Actions */}
-        <div className="flex gap-4 justify-center">
-          <Link href="/dashboard/interviews">
-            <Button variant="secondary" className="gap-2">
-              <ArrowLeft className="w-4 h-4" /> Back
-            </Button>
-          </Link>
-          <Link href="/dashboard/reports">
-            <Button className="gap-2">
-              View Reports
-            </Button>
-          </Link>
-        </div>
+        {/* Human Override Section */}
+        <GlassCard className="p-6 mb-6 border-2 border-purple-500/30">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold flex items-center gap-2">
+              <Hand className="w-5 h-5 text-purple-400" />
+              Human Oversight Decision
+            </h3>
+            <span className="px-2 py-1 rounded text-xs bg-purple-500/20 text-purple-400 border border-purple-500/30">
+              Required
+            </span>
+          </div>
+
+          {humanOverride.enabled ? (
+            // Show override decision
+            <div className="space-y-4">
+              <div className={cn(
+                "p-4 rounded-xl",
+                humanOverride.decision === "approved" ? "bg-green-500/10 border border-green-500/30" :
+                  humanOverride.decision === "rejected" ? "bg-red-500/10 border border-red-500/30" :
+                    "bg-yellow-500/10 border border-yellow-500/30"
+              )}>
+                <div className="flex items-center gap-3 mb-2">
+                  {humanOverride.decision === "approved" ? (
+                    <ThumbsUp className="w-6 h-6 text-green-400" />
+                  ) : humanOverride.decision === "rejected" ? (
+                    <ThumbsDown className="w-6 h-6 text-red-400" />
+                  ) : (
+                    <AlertCircle className="w-6 h-6 text-yellow-400" />
+                  )}
+                  <div>
+                    <div className="font-semibold">
+                      {humanOverride.decision === "approved" ? "Approved by Human Reviewer" :
+                        humanOverride.decision === "rejected" ? "Rejected by Human Reviewer" :
+                          "Marked for Further Review"}
+                    </div>
+                    <div className="text-xs text-white/50">
+                      {humanOverride.overriddenAt?.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+                {humanOverride.notes && (
+                  <p className="text-sm text-white/70 mt-2 p-3 bg-white/5 rounded-lg">
+                    "{humanOverride.notes}"
+                  </p>
+                )}
+              </div>
+
+              <Button
+                variant="secondary"
+                onClick={() => setShowOverrideModal(true)}
+                className="w-full"
+              >
+                Modify Decision
+              </Button>
+            </div>
+          ) : (
+            // Prompt for human decision
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-sm text-white/70 mb-3">
+                  AI has provided a preliminary assessment. As required by organizational policy and EU AI Act guidelines,
+                  a human reviewer must make the final hiring decision.
+                </p>
+                <div className="flex items-center gap-2 text-xs text-purple-300">
+                  <Info className="w-4 h-4" />
+                  AI recommendations are advisory only. Your decision will be logged for audit purposes.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <button
+                  onClick={() => {
+                    setHumanOverride({
+                      enabled: true,
+                      decision: "approved",
+                      notes: "",
+                      overriddenBy: "Current User",
+                      overriddenAt: new Date(),
+                    });
+                    // Save to database
+                    saveHumanOverride("approved", "Quick approval");
+                    // Log decision for audit
+                    logAuditEvent("human_override", {
+                      aiRecommendation: recommendation,
+                      aiScore: finalScore,
+                      humanDecision: "approved",
+                      reasoning: "Quick approval",
+                      overriddenBy: "Current User",
+                    });
+                  }}
+                  className="p-4 rounded-xl bg-green-500/10 border border-green-500/30 hover:bg-green-500/20 transition-colors"
+                >
+                  <ThumbsUp className="w-6 h-6 text-green-400 mx-auto mb-2" />
+                  <div className="text-sm font-medium text-green-400">Approve</div>
+                </button>
+                <button
+                  onClick={() => setShowOverrideModal(true)}
+                  className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 transition-colors"
+                >
+                  <AlertCircle className="w-6 h-6 text-yellow-400 mx-auto mb-2" />
+                  <div className="text-sm font-medium text-yellow-400">Review</div>
+                </button>
+                <button
+                  onClick={() => {
+                    setHumanOverride({
+                      enabled: true,
+                      decision: "rejected",
+                      notes: "",
+                      overriddenBy: "Current User",
+                      overriddenAt: new Date(),
+                    });
+                    // Save to database
+                    saveHumanOverride("rejected", "Quick rejection");
+                    // Log decision for audit
+                    logAuditEvent("human_override", {
+                      aiRecommendation: recommendation,
+                      aiScore: finalScore,
+                      humanDecision: "rejected",
+                      reasoning: "Quick rejection",
+                      overriddenBy: "Current User",
+                    });
+                  }}
+                  className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 transition-colors"
+                >
+                  <ThumbsDown className="w-6 h-6 text-red-400 mx-auto mb-2" />
+                  <div className="text-sm font-medium text-red-400">Reject</div>
+                </button>
+              </div>
+            </div>
+          )}
+        </GlassCard>
+
+        {/* Override Modal */}
+        <AnimatePresence>
+          {showOverrideModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                onClick={() => setShowOverrideModal(false)}
+              />
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="relative w-full max-w-md"
+              >
+                <GlassCard className="p-6">
+                  <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <Hand className="w-5 h-5 text-purple-400" />
+                    Human Override Decision
+                  </h3>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm text-white/50 mb-2 block">Your Decision</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(["approved", "review", "rejected"] as const).map((decision) => (
+                          <button
+                            key={decision}
+                            onClick={() => setHumanOverride(prev => ({ ...prev, decision }))}
+                            className={cn(
+                              "p-3 rounded-lg border transition-colors",
+                              humanOverride.decision === decision
+                                ? decision === "approved" ? "bg-green-500/20 border-green-500" :
+                                  decision === "rejected" ? "bg-red-500/20 border-red-500" :
+                                    "bg-yellow-500/20 border-yellow-500"
+                                : "bg-white/5 border-white/10 hover:bg-white/10"
+                            )}
+                          >
+                            <div className={cn(
+                              "text-sm font-medium capitalize",
+                              humanOverride.decision === decision
+                                ? decision === "approved" ? "text-green-400" :
+                                  decision === "rejected" ? "text-red-400" :
+                                    "text-yellow-400"
+                                : "text-white/70"
+                            )}>
+                              {decision === "review" ? "Needs Review" : decision}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-white/50 mb-2 block">
+                        Reasoning / Notes (Required for audit)
+                      </label>
+                      <textarea
+                        value={humanOverride.notes}
+                        onChange={(e) => setHumanOverride(prev => ({ ...prev, notes: e.target.value }))}
+                        placeholder="Explain your decision..."
+                        className="w-full p-3 rounded-lg bg-white/5 border border-white/10 text-white resize-none h-24"
+                      />
+                    </div>
+
+                    <div className="flex gap-3">
+                      <Button
+                        variant="secondary"
+                        onClick={() => setShowOverrideModal(false)}
+                        className="flex-1"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setHumanOverride(prev => ({
+                            ...prev,
+                            enabled: true,
+                            overriddenBy: "Current User",
+                            overriddenAt: new Date(),
+                          }));
+
+                          // Save to database
+                          saveHumanOverride(humanOverride.decision || "review", humanOverride.notes);
+
+                          // Log human override for audit compliance
+                          logAuditEvent("human_override", {
+                            aiRecommendation: recommendation,
+                            aiScore: finalScore,
+                            humanDecision: humanOverride.decision,
+                            reasoning: humanOverride.notes,
+                            overriddenBy: "Current User",
+                          });
+
+                          setShowOverrideModal(false);
+                        }}
+                        disabled={!humanOverride.decision}
+                        className="flex-1"
+                      >
+                        Confirm Decision
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-white/30 text-center">
+                      This decision will be logged for compliance and audit purposes.
+                    </p>
+                  </div>
+                </GlassCard>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Actions - Only shown after human decision is made */}
+        {humanOverride.enabled ? (
+          <div className="flex gap-4 justify-center">
+            <Link href="/dashboard/interviews">
+              <Button variant="secondary" className="gap-2">
+                <ArrowLeft className="w-4 h-4" /> Back to Interviews
+              </Button>
+            </Link>
+            <Link href="/dashboard/reports">
+              <Button className="gap-2">
+                View Reports
+              </Button>
+            </Link>
+          </div>
+        ) : (
+          <div className="text-center p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+            <AlertCircle className="w-6 h-6 text-yellow-400 mx-auto mb-2" />
+            <p className="text-yellow-300 text-sm font-medium">
+              Human oversight decision required before proceeding
+            </p>
+            <p className="text-white/50 text-xs mt-1">
+              Please make a decision above to complete the evaluation process
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

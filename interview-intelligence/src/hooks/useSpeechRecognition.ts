@@ -213,8 +213,11 @@ export function useTextToSpeech() {
       }
     };
 
-    utterance.onerror = (event) => {
-      console.error("Speech synthesis error:", event);
+    utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
+      // Only log actual errors, not interruptions from cancel()
+      if (event.error !== "interrupted" && event.error !== "canceled") {
+        console.error("Speech synthesis error:", event.error);
+      }
       setIsSpeaking(false);
       if (callbackRef.current) {
         callbackRef.current();

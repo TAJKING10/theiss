@@ -84,7 +84,7 @@ export async function answerQuestion(
   return updateQuestion(id, {
     answer,
     answered_at: new Date().toISOString(),
-    ai_evaluation: aiEvaluation,
+    ai_evaluation: aiEvaluation as import("@/lib/supabase/types").Json | undefined,
     score,
   });
 }

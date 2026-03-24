@@ -15,6 +15,16 @@ import {
   generateClosing,
   generateEncouragementForStuck,
 } from "@/lib/ai/positiveResponses";
+import {
+  CORE_COMPETENCIES,
+  generateRubricPrompt,
+  parseRubricResponse,
+  getLevel,
+  calculateOverallScore,
+  getRecommendation,
+  type CompetencyScore,
+  type RubricEvaluation,
+} from "@/lib/ai/competencyRubric";
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -39,12 +49,16 @@ export async function POST(request: NextRequest) {
         return await generateInterviewQuestions(params);
       case "evaluateAnswer":
         return await evaluateAnswer(params);
+      case "evaluateAnswerWithRubric":
+        return await evaluateAnswerWithRubric(params);
       case "generateInsight":
         return await generateInsight(params);
       case "chat":
         return await chat(params);
       case "generateFeedback":
         return await generateFeedback(params);
+      case "generateFeedbackWithRubric":
+        return await generateFeedbackWithRubric(params);
       case "conductInterview":
         return await conductInterview(params);
       default:
@@ -541,5 +555,231 @@ Generate a short follow-up question (1 sentence) that encourages them to elabora
 
   return NextResponse.json({
     followUp: completion.choices[0].message.content,
+  });
+}
+
+// Evaluate answer using competency-based rubric
+// EU AI Act Compliance: This evaluation is based solely on transcript content
+async function evaluateAnswerWithRubric(params: {
+  question: string;
+  answer: string;
+  position: string;
+  questionIndex: number;
+  totalQuestions: number;
+}) {
+  const { question, answer, position, questionIndex, totalQuestions } = params;
+
+  if (!answer || answer.trim().length < 10) {
+    return NextResponse.json({
+      overallScore: 0,
+      competencies: CORE_COMPETENCIES.map(c => ({
+        competency: c.name,
+        score: 0,
+        level: "novice" as const,
+        evidence: [],
+        reasoning: "Answer too short to evaluate",
+      })),
+      strengths: [],
+      areasForGrowth: ["Provide a more detailed response"],
+      recommendation: "no" as const,
+      confidence: 0,
+      limitations: ["Insufficient content for meaningful evaluation"],
+      feedback: "Please provide a more detailed answer.",
+    });
+  }
+
+  const rubricPrompt = generateRubricPrompt(question, answer, position);
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are an expert interviewer evaluating responses using a structured competency rubric.
+
+IMPORTANT GUIDELINES:
+- Evaluate ONLY based on the transcript content provided
+- Do NOT make assumptions about qualities not demonstrated
+- Cite specific quotes from the answer as evidence
+- Be honest about limitations in your evaluation
+- Acknowledge uncertainty when appropriate
+- Consider the position level when setting expectations
+
+Your evaluation must be fair, unbiased, and evidence-based.`,
+      },
+      {
+        role: "user",
+        content: rubricPrompt,
+      },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.3,
+  });
+
+  const content = completion.choices[0].message.content;
+  const evaluation = parseRubricResponse(content || "{}");
+
+  if (!evaluation) {
+    // Fallback evaluation
+    return NextResponse.json({
+      overallScore: 50,
+      competencies: CORE_COMPETENCIES.map(c => ({
+        competency: c.name,
+        score: 50,
+        level: "developing" as const,
+        evidence: [],
+        reasoning: "Unable to parse detailed evaluation",
+      })),
+      strengths: ["Provided a response"],
+      areasForGrowth: ["Could not complete detailed analysis"],
+      recommendation: "maybe" as const,
+      confidence: 30,
+      limitations: ["Evaluation parsing failed"],
+      feedback: "Thank you for your response.",
+    });
+  }
+
+  // Generate encouraging feedback
+  const positionLevel = getPositionLevel(position);
+  const feedback = generatePositiveFeedback(
+    evaluation.overallScore,
+    positionLevel,
+    questionIndex + 1,
+    totalQuestions
+  );
+
+  return NextResponse.json({
+    ...evaluation,
+    feedback,
+    questionIndex,
+    scoringMethodology: {
+      version: "1.0",
+      method: "competency-based rubric",
+      competenciesEvaluated: CORE_COMPETENCIES.map(c => c.name),
+      faceMetricsUsed: false,
+    },
+  });
+}
+
+// Generate comprehensive feedback with rubric-based analysis
+async function generateFeedbackWithRubric(params: {
+  candidateName: string;
+  position: string;
+  answers: {
+    question: string;
+    answer: string;
+    competencies?: CompetencyScore[];
+    overallScore?: number;
+  }[];
+  duration?: number;
+}) {
+  const { candidateName, position, answers, duration } = params;
+
+  // Aggregate competency scores across all answers
+  const aggregatedCompetencies: Record<string, { scores: number[]; evidence: string[] }> = {};
+  CORE_COMPETENCIES.forEach(c => {
+    aggregatedCompetencies[c.name] = { scores: [], evidence: [] };
+  });
+
+  answers.forEach(a => {
+    if (a.competencies) {
+      a.competencies.forEach(c => {
+        if (aggregatedCompetencies[c.competency]) {
+          aggregatedCompetencies[c.competency].scores.push(c.score);
+          aggregatedCompetencies[c.competency].evidence.push(...c.evidence);
+        }
+      });
+    }
+  });
+
+  // Calculate final competency scores
+  const finalCompetencies: CompetencyScore[] = Object.entries(aggregatedCompetencies).map(
+    ([name, data]) => {
+      const avgScore = data.scores.length > 0
+        ? Math.round(data.scores.reduce((a, b) => a + b, 0) / data.scores.length)
+        : 50;
+      return {
+        competency: name,
+        score: avgScore,
+        level: getLevel(avgScore),
+        evidence: data.evidence.slice(0, 3), // Top 3 evidence pieces
+        reasoning: `Based on ${data.scores.length} evaluated responses`,
+      };
+    }
+  );
+
+  const overallScore = calculateOverallScore(finalCompetencies);
+  const recommendation = getRecommendation(overallScore, finalCompetencies);
+
+  // Generate detailed summary using AI
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are an expert HR analyst generating comprehensive interview feedback.
+
+IMPORTANT:
+- Base all assessments ONLY on the provided transcript evidence
+- Be fair, objective, and evidence-based
+- Acknowledge limitations and uncertainty
+- Do not make assumptions beyond what is demonstrated
+- Provide actionable, specific feedback`,
+      },
+      {
+        role: "user",
+        content: `Generate a summary for this interview:
+
+Candidate: ${candidateName}
+Position: ${position}
+Duration: ${duration ? Math.round(duration / 60) + " minutes" : "N/A"}
+
+Competency Scores:
+${finalCompetencies.map(c => `- ${c.competency}: ${c.score}% (${c.level})`).join("\n")}
+
+Overall Score: ${overallScore}%
+Recommendation: ${recommendation}
+
+Questions & Answers:
+${answers.map((a, i) => `Q${i + 1}: ${a.question}\nA: ${a.answer}`).join("\n\n")}
+
+Provide a JSON response with:
+- summary: 3-4 sentence assessment
+- strengths: top 3-5 demonstrated strengths with evidence
+- areasForGrowth: 2-3 areas for improvement with suggestions
+- keyInsights: 2-3 notable observations
+- limitations: acknowledgment of evaluation limitations`,
+      },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.3,
+  });
+
+  const content = completion.choices[0].message.content;
+  const aiSummary = JSON.parse(content || "{}");
+
+  return NextResponse.json({
+    candidateName,
+    position,
+    overallScore,
+    recommendation,
+    competencies: finalCompetencies,
+    summary: aiSummary.summary || `Interview completed with overall score of ${overallScore}%.`,
+    strengths: aiSummary.strengths || [],
+    areasForGrowth: aiSummary.areasForGrowth || [],
+    keyInsights: aiSummary.keyInsights || [],
+    limitations: aiSummary.limitations || [
+      "Evaluation based solely on interview responses",
+      "May not capture all candidate capabilities",
+      "Human review recommended for final decision",
+    ],
+    scoringMethodology: {
+      version: "1.0",
+      method: "competency-based rubric aggregation",
+      competenciesEvaluated: CORE_COMPETENCIES.map(c => c.name),
+      faceMetricsUsed: false,
+      humanOversightRequired: true,
+    },
+    timestamp: new Date().toISOString(),
   });
 }

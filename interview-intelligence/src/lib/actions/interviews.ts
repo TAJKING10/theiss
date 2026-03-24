@@ -192,7 +192,7 @@ export async function completeInterview(
     status: "completed",
     score,
     notes,
-    ai_insights: aiInsights,
+    ai_insights: aiInsights as import("@/lib/supabase/types").Json | undefined,
   });
 }
 
@@ -280,14 +280,14 @@ export async function uploadInterviewRecording(
     throw new Error("Interview not found or unauthorized");
   }
 
-  // Upload to storage
+  // Upload to PRIVATE storage
   const fileName = `${user.id}/${interviewId}/recording-${Date.now()}.webm`;
 
   // Convert Blob to ArrayBuffer for server upload
   const arrayBuffer = await recordingBlob.arrayBuffer();
   const buffer = new Uint8Array(arrayBuffer);
 
-  const { data: uploadData, error: uploadError } = await supabase.storage
+  const { error: uploadError } = await supabase.storage
     .from("interview-recordings")
     .upload(fileName, buffer, {
       contentType: "video/webm",
@@ -298,17 +298,21 @@ export async function uploadInterviewRecording(
     throw new Error(`Upload failed: ${uploadError.message}`);
   }
 
-  // Get public URL
-  const { data: urlData } = supabase.storage
+  // Store the file PATH (not URL) for privacy
+  // Signed URLs will be generated on-demand when accessing
+  await updateInterview(interviewId, { recording_url: fileName });
+
+  // Generate a signed URL for immediate use
+  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
     .from("interview-recordings")
-    .getPublicUrl(fileName);
+    .createSignedUrl(fileName, 3600);
 
-  const recordingUrl = urlData.publicUrl;
+  if (signedUrlError) {
+    // Return path if signed URL fails
+    return fileName;
+  }
 
-  // Update interview with recording URL
-  await updateInterview(interviewId, { recording_url: recordingUrl });
-
-  return recordingUrl;
+  return signedUrlData.signedUrl;
 }
 
 // Save interview transcript
@@ -338,7 +342,7 @@ export async function saveInterviewTranscript(
   return data;
 }
 
-// Get interview recording URL
+// Get interview recording URL (generates signed URL for private storage)
 export async function getInterviewRecording(interviewId: string): Promise<string | null> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -358,5 +362,20 @@ export async function getInterviewRecording(interviewId: string): Promise<string
     throw new Error(error.message);
   }
 
-  return data?.recording_url || null;
+  const recordingPath = data?.recording_url;
+  if (!recordingPath) {
+    return null;
+  }
+
+  // Generate a signed URL for secure access (expires in 1 hour)
+  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+    .from("interview-recordings")
+    .createSignedUrl(recordingPath, 3600);
+
+  if (signedUrlError) {
+    console.error("Failed to create signed URL:", signedUrlError);
+    return null;
+  }
+
+  return signedUrlData.signedUrl;
 }

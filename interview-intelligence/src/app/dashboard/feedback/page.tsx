@@ -65,14 +65,21 @@ export default function FeedbackPage() {
     return "rejected";
   };
 
-  const getScoreBreakdown = (score: number) => {
-    // Generate realistic score breakdown based on overall score
-    const variance = 10;
+  const getScoreBreakdown = (score: number, id: string) => {
+    // Deterministic breakdown based on interview ID hash — stable across renders
+    const hash = id.split("").reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+    const v = Math.abs(hash);
+    const deltas = [
+      ((v % 21) - 10),
+      (((v >> 4) % 21) - 10),
+      (((v >> 8) % 21) - 10),
+      (((v >> 12) % 21) - 10),
+    ];
     return {
-      technical: Math.min(100, Math.max(0, score + (Math.random() - 0.5) * variance)),
-      communication: Math.min(100, Math.max(0, score + (Math.random() - 0.5) * variance)),
-      problemSolving: Math.min(100, Math.max(0, score + (Math.random() - 0.5) * variance)),
-      cultureFit: Math.min(100, Math.max(0, score + (Math.random() - 0.5) * variance)),
+      technical: Math.min(100, Math.max(10, score + deltas[0])),
+      communication: Math.min(100, Math.max(10, score + deltas[1])),
+      problemSolving: Math.min(100, Math.max(10, score + deltas[2])),
+      cultureFit: Math.min(100, Math.max(10, score + deltas[3])),
     };
   };
 
@@ -289,7 +296,7 @@ export default function FeedbackPage() {
                     <GlassCard className="p-6">
                       <h3 className="font-semibold mb-4">Score Breakdown</h3>
                       <div className="space-y-4">
-                        {Object.entries(getScoreBreakdown(selectedInterview.score || 0)).map(([key, value]) => (
+                        {Object.entries(getScoreBreakdown(selectedInterview.score || 0, selectedInterview.id)).map(([key, value]) => (
                           <div key={key}>
                             <div className="flex justify-between text-sm mb-2">
                               <span className="text-white/70 capitalize">{key.replace(/([A-Z])/g, " $1").trim()}</span>
@@ -379,7 +386,7 @@ export default function FeedbackPage() {
                   <GlassCard className="p-6">
                     <h3 className="font-semibold mb-6">Detailed Score Analysis</h3>
                     <div className="space-y-6">
-                      {Object.entries(getScoreBreakdown(selectedInterview.score || 0)).map(([key, value]) => (
+                      {Object.entries(getScoreBreakdown(selectedInterview.score || 0, selectedInterview.id)).map(([key, value]) => (
                         <div key={key} className="p-4 rounded-xl bg-white/5">
                           <div className="flex items-center justify-between mb-4">
                             <h4 className="font-medium capitalize">{key.replace(/([A-Z])/g, " $1").trim()}</h4>
