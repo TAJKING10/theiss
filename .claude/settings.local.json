@@ -31,7 +31,13 @@
       "Bash(wc:*)",
       "Bash(netstat -ano)",
       "Bash(cmd /c \"taskkill /PID 5676 /F\")",
-      "Bash(cmd /c \"taskkill /PID 5676 /F 2>nul && echo killed\")"
+      "Bash(cmd /c \"taskkill /PID 5676 /F 2>nul && echo killed\")",
+      "Bash(grep -E \"\\(^C:|\\\\.tsx$|\\\\.ts$|package\\\\.json|\\\\.env\\)\")",
+      "Bash(ls:*)",
+      "Bash(grep -r \"research\\\\|report\" /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence/src/app --include=*.tsx)",
+      "Bash(grep -r \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\\\\|BUG\" /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence/src --include=*.tsx --include=*.ts)",
+      "Bash(grep -r \"getConversationState\\\\|parseUserIntent\\\\|getPositionLevel\" /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence/src/lib/ai --include=*.ts)",
+      "Bash(grep -r .env /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence --include=*.tsx --include=*.ts --include=*.md --include=.env*)"
     ]
   },
   "enableAllProjectMcpServers": true,

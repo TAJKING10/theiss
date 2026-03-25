@@ -31,7 +31,20 @@ export async function getDashboardData(): Promise<DashboardData> {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    throw new Error("Unauthorized");
+    return {
+      stats: {
+        totalInterviews: 0,
+        totalCandidates: 0,
+        avgFairnessScore: 0,
+        timeSavedHours: 0,
+        interviewGrowth: 0,
+        candidateGrowth: 0,
+        scoreGrowth: 0,
+        timeGrowth: 0,
+      },
+      recentInterviews: [],
+      upcomingInterviews: [],
+    };
   }
 
   const now = new Date();
