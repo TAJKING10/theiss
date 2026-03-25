@@ -37,7 +37,9 @@
       "Bash(grep -r \"research\\\\|report\" /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence/src/app --include=*.tsx)",
       "Bash(grep -r \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\\\\|BUG\" /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence/src --include=*.tsx --include=*.ts)",
       "Bash(grep -r \"getConversationState\\\\|parseUserIntent\\\\|getPositionLevel\" /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence/src/lib/ai --include=*.ts)",
-      "Bash(grep -r .env /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence --include=*.tsx --include=*.ts --include=*.md --include=.env*)"
+      "Bash(grep -r .env /c/Users/Toufi/AndroidStudioProjects/theiss/interview-intelligence --include=*.tsx --include=*.ts --include=*.md --include=.env*)",
+      "Bash(xargs grep:*)",
+      "Bash(grep:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

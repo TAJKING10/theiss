@@ -434,10 +434,12 @@ export default function CandidateAIInterviewPage() {
               <div className="aspect-video bg-black/50 rounded-xl overflow-hidden relative mb-4">
                 <video
                   ref={videoRef}
-                  autoPlay
                   playsInline
                   muted
                   className="w-full h-full object-cover"
+                  onLoadedMetadata={(e) => {
+                    (e.target as HTMLVideoElement).play().catch(() => {});
+                  }}
                 />
                 {!cameraReady && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -511,6 +513,7 @@ export default function CandidateAIInterviewPage() {
                     onChange={(e) => setCandidateName(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
                     placeholder="Enter your name"
+                    suppressHydrationWarning
                   />
                 </div>
 
@@ -589,10 +592,12 @@ export default function CandidateAIInterviewPage() {
               <GlassCard className="p-0 overflow-hidden aspect-video relative">
                 <video
                   ref={videoRef}
-                  autoPlay
                   playsInline
                   muted
                   className="w-full h-full object-cover"
+                  onLoadedMetadata={(e) => {
+                    (e.target as HTMLVideoElement).play().catch(() => {});
+                  }}
                 />
 
                 {/* Emotion Badge */}
