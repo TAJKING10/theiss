@@ -192,9 +192,9 @@ export default function InterviewSessionPage() {
 
   // Metrics
   const [metrics, setMetrics] = useState({
-    confidence: 75,
-    engagement: 80,
-    clarity: 78,
+    confidence: 0,
+    engagement: 0,
+    clarity: 0,
   });
 
   // Results
@@ -242,15 +242,24 @@ export default function InterviewSessionPage() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const [isRecording, setIsRecording] = useState(false);
 
+  // Safe helper — sets srcObject only if changed, plays only when metadata is ready
+  const connectVideoStream = useCallback((element: HTMLVideoElement, stream: MediaStream) => {
+    if (element.srcObject === stream) return; // already connected, nothing to do
+    element.srcObject = stream;
+    element.onloadedmetadata = () => {
+      element.play().catch(err => {
+        if (err.name !== "AbortError") console.error("Video play error:", err);
+      });
+    };
+  }, []);
+
   // Callback ref to connect stream when video element mounts
   const setVideoRef = useCallback((element: HTMLVideoElement | null) => {
-    if (element && streamRef.current) {
-      element.srcObject = streamRef.current;
-      element.play().catch(e => console.error("Video autoplay error:", e));
-    }
-    // Also update the regular ref for other uses
     (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = element;
-  }, []);
+    if (element && streamRef.current) {
+      connectVideoStream(element, streamRef.current);
+    }
+  }, [connectVideoStream]);
 
   // Speech hooks
   const {
@@ -470,44 +479,31 @@ export default function InterviewSessionPage() {
     }
   }, [speechEmotion, emotionApiAvailable]);
 
-  // Keep metrics animated when emotion API is unavailable (fallback simulation)
+  // Update Live Analysis metrics from real API data
+  // confidence  = body language score (how confident the person looks — from port 8001)
+  // engagement  = eye contact % running average (are they looking at camera — from port 8001)
+  // clarity     = speech emotion model confidence (vocal clarity — from port 8000)
   useEffect(() => {
-    if (stage === "interview" && cameraReady && !emotionApiAvailable) {
-      emotionIntervalRef.current = setInterval(() => {
-        setMetrics(prev => ({
-          confidence: Math.min(100, Math.max(50, prev.confidence + (Math.random() - 0.5) * 4)),
-          engagement: Math.min(100, Math.max(50, prev.engagement + (Math.random() - 0.5) * 4)),
-          clarity: Math.min(100, Math.max(50, prev.clarity + (Math.random() - 0.5) * 4)),
-        }));
-      }, 3000);
-    }
-    return () => {
-      if (emotionIntervalRef.current) clearInterval(emotionIntervalRef.current);
-    };
-  }, [stage, cameraReady, emotionApiAvailable]);
+    if (stage !== "interview") return;
+    setMetrics({
+      confidence: blApiAvailable && bodyLanguage.body_language_score > 0
+        ? bodyLanguage.body_language_score
+        : 0,
+      engagement: blApiAvailable
+        ? eyeContactPct
+        : 0,
+      clarity: emotionApiAvailable && speechEmotion.confidence > 0
+        ? Math.round(speechEmotion.confidence)
+        : 0,
+    });
+  }, [stage, blApiAvailable, bodyLanguage.body_language_score, eyeContactPct, emotionApiAvailable, speechEmotion.confidence]);
 
   // Reconnect video stream when entering interview stage
   useEffect(() => {
     if (stage === "interview" && streamRef.current && videoRef.current) {
-      // Small delay to ensure DOM is updated after stage change
-      const connectVideo = async () => {
-        if (videoRef.current && streamRef.current) {
-          videoRef.current.srcObject = streamRef.current;
-          try {
-            await videoRef.current.play();
-          } catch (e) {
-            console.error("Video play error:", e);
-          }
-        }
-      };
-
-      // Try immediately and also after a short delay
-      connectVideo();
-      const timeout = setTimeout(connectVideo, 100);
-
-      return () => clearTimeout(timeout);
+      connectVideoStream(videoRef.current, streamRef.current);
     }
-  }, [stage]);
+  }, [stage, connectVideoStream]);
 
   const loadData = async () => {
     try {
@@ -546,10 +542,7 @@ export default function InterviewSessionPage() {
       streamRef.current = stream;
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(e => console.error("Video play error:", e));
-        };
+        connectVideoStream(videoRef.current, stream);
       }
 
       setCameraReady(true);
@@ -703,7 +696,7 @@ export default function InterviewSessionPage() {
     } catch (error) {
       console.error("Evaluation error:", error);
     }
-    return { score: Math.floor(Math.random() * 30) + 60 };
+    return { score: 0 }; // OpenAI unavailable — mark as unscored rather than fake score
   }, [interview?.candidate?.position, questions.length]);
 
   // Ask question by explicit index - defined early to avoid circular deps
@@ -741,10 +734,14 @@ export default function InterviewSessionPage() {
       stopRecording();
     }
 
-    const closingMessage = `That concludes all the questions! Thank you so much ${interview?.candidate?.name || ""} for your time today. You did a wonderful job. I'm now analyzing your responses and will prepare a detailed report.`;
+    const closingMessage = `That concludes all the questions! Thank you so much ${interview?.candidate?.name || ""} for your time today. You did a wonderful job. I'm now preparing your results.`;
+
+    // Always finish after 6 seconds max — don't rely solely on TTS callback
+    const fallbackTimer = setTimeout(() => finishInterviewRef.current(), 6000);
 
     speakText(closingMessage, () => {
-      setTimeout(() => finishInterviewRef.current(), 2000);
+      clearTimeout(fallbackTimer);
+      finishInterviewRef.current();
     });
   }, [interview?.candidate?.name, stopListening, speakText, isRecording, stopRecording]);
 
@@ -840,8 +837,7 @@ export default function InterviewSessionPage() {
 
     // Make sure video is connected
     if (videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      await videoRef.current.play().catch(e => console.error("Play error:", e));
+      connectVideoStream(videoRef.current, streamRef.current);
     }
 
     setStage("interview");
@@ -1084,8 +1080,13 @@ export default function InterviewSessionPage() {
     });
   };
 
+  const finishingRef = useRef(false);
+
   // finishInterview implementation - updates the ref for handleEndInterview
   const finishInterview = useCallback(async () => {
+    if (finishingRef.current) return; // prevent double-call
+    finishingRef.current = true;
+
     stopListening();
     stopSpeaking();
     stopCamera();
@@ -1997,19 +1998,28 @@ export default function InterviewSessionPage() {
                 <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
                   <Activity className="w-4 h-4 text-green-400" /> Live Analysis
                 </h3>
-                {Object.entries(metrics).map(([key, value]) => (
+                {([
+                  { key: "confidence", label: "Body Confidence", value: metrics.confidence, source: blApiAvailable ? "body language AI" : "API offline" },
+                  { key: "engagement", label: "Eye Contact", value: metrics.engagement, source: blApiAvailable ? "camera analysis" : "API offline" },
+                  { key: "clarity", label: "Speech Clarity", value: metrics.clarity, source: emotionApiAvailable ? "speech emotion AI" : "API offline" },
+                ] as const).map(({ key, label, value, source }) => (
                   <div key={key} className="mb-3">
                     <div className="flex justify-between text-xs mb-1">
-                      <span className="text-white/50 capitalize">{key}</span>
-                      <span>{Math.round(value)}%</span>
+                      <span className="text-white/50">{label}</span>
+                      {value === 0
+                        ? <span className="text-white/25 italic">{source}</span>
+                        : <span>{value}%</span>
+                      }
                     </div>
                     <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                       <motion.div
                         className={cn(
                           "h-full rounded-full",
+                          value === 0 ? "bg-white/10" :
                           value >= 80 ? "bg-green-500" : value >= 60 ? "bg-yellow-500" : "bg-red-500"
                         )}
                         animate={{ width: `${value}%` }}
+                        transition={{ duration: 0.5 }}
                       />
                     </div>
                   </div>
