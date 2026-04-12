@@ -540,32 +540,52 @@ export default function ReportsPage() {
               </GlassCard>
             </div>
 
-            {/* Question Analysis Placeholder */}
+            {/* Score Breakdown Analysis — real data from multimodal scoring */}
             <GlassCard className="p-6">
               <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
                 <HelpCircle className="w-5 h-5 text-orange-400" />
-                Question Performance Analysis
+                Multimodal Score Breakdown
               </h3>
               <p className="text-white/50 text-sm mb-4">
-                Track which questions candidates struggle with the most to improve your interview process.
+                Average scores across all three analysis streams for completed interviews.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
-                  <div className="text-lg font-bold text-green-400">Behavioral</div>
-                  <div className="text-sm text-white/50">Avg Score: {avgScore > 0 ? avgScore + 5 : 0}%</div>
-                  <div className="text-xs text-green-400/70">Best performing category</div>
+              {avgScore > 0 ? (() => {
+                // Compute real per-stream averages from interviews that have score_breakdown saved
+                const withBreakdown = interviews.filter((i: any) => i.score_breakdown?.answerScore > 0);
+                const answerAvg = withBreakdown.length > 0
+                  ? Math.round(withBreakdown.reduce((s: number, i: any) => s + (i.score_breakdown.answerScore || 0), 0) / withBreakdown.length)
+                  : null;
+                const blAvg = withBreakdown.length > 0
+                  ? Math.round(withBreakdown.reduce((s: number, i: any) => s + (i.score_breakdown.bodyLangScore || 0), 0) / withBreakdown.length)
+                  : null;
+                const speechAvg = withBreakdown.length > 0
+                  ? Math.round(withBreakdown.reduce((s: number, i: any) => s + (i.score_breakdown.speechEmotionScore || 0), 0) / withBreakdown.length)
+                  : null;
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                      <div className="text-lg font-bold text-blue-400">📝 Answers</div>
+                      <div className="text-2xl font-bold mt-1">{answerAvg !== null ? `${answerAvg}%` : `${avgScore}%`}</div>
+                      <div className="text-xs text-blue-400/70 mt-1">AI rubric · weight 60%</div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
+                      <div className="text-lg font-bold text-green-400">🧍 Body Language</div>
+                      <div className="text-2xl font-bold mt-1">{blAvg !== null ? `${blAvg}%` : "—"}</div>
+                      <div className="text-xs text-green-400/70 mt-1">MediaPipe · weight 25%</div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                      <div className="text-lg font-bold text-purple-400">🎙️ Speech Emotion</div>
+                      <div className="text-2xl font-bold mt-1">{speechAvg !== null ? `${speechAvg}%` : "—"}</div>
+                      <div className="text-xs text-purple-400/70 mt-1">Voice model · weight 15%</div>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div className="text-center py-6 text-white/30 text-sm">
+                  Complete interviews to see multimodal breakdown averages.
                 </div>
-                <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
-                  <div className="text-lg font-bold text-yellow-400">Technical</div>
-                  <div className="text-sm text-white/50">Avg Score: {avgScore > 0 ? avgScore - 3 : 0}%</div>
-                  <div className="text-xs text-yellow-400/70">Room for improvement</div>
-                </div>
-                <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20">
-                  <div className="text-lg font-bold text-orange-400">Situational</div>
-                  <div className="text-sm text-white/50">Avg Score: {avgScore > 0 ? avgScore - 8 : 0}%</div>
-                  <div className="text-xs text-orange-400/70">Most challenging</div>
-                </div>
-              </div>
+              )}
             </GlassCard>
           </div>
         )}

@@ -43,14 +43,22 @@ export default function SettingsPage() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
+  const [currentUser, setCurrentUser] = useState<{ name: string; email: string; avatar: string } | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) {
-        setProfileData({
-          name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "",
-          email: user.email || "",
-        });
+        const name = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "";
+        setProfileData({ name, email: user.email || "" });
+        setCurrentUser({ name, email: user.email || "", avatar: name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2) });
+
+        // Load saved AI/Bias settings from user metadata
+        const saved = user.user_metadata?.appSettings;
+        if (saved?.aiSettings) setAiSettings(prev => ({ ...prev, ...saved.aiSettings }));
+        if (saved?.biasSettings) setBiasSettings(prev => ({ ...prev, ...saved.biasSettings }));
       }
     });
   }, []);
@@ -70,6 +78,23 @@ export default function SettingsPage() {
       setProfileError(err.message || "Failed to save profile");
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({
+        data: { appSettings: { aiSettings, biasSettings } },
+      });
+      if (error) throw error;
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2500);
+    } catch (err: any) {
+      console.error("Failed to save settings:", err);
+    } finally {
+      setSettingsSaving(false);
     }
   };
 
@@ -445,45 +470,46 @@ export default function SettingsPage() {
                   </Button>
                 </div>
                 <div className="divide-y divide-white/5">
-                  {[
-                    { name: "John Smith", email: "john@company.com", role: "Admin", avatar: "JS" },
-                    { name: "Sarah Johnson", email: "sarah@company.com", role: "Recruiter", avatar: "SJ" },
-                  ].map((member) => (
-                    <div key={member.email} className="p-6 flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                  {currentUser ? (
+                    <div className="p-6 flex items-center justify-between hover:bg-white/[0.02] transition-colors">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold text-xs border border-white/10">
-                          {member.avatar}
+                          {currentUser.avatar}
                         </div>
                         <div>
-                          <div className="font-bold text-sm">{member.name}</div>
-                          <div className="text-xs text-white/40">{member.email}</div>
+                          <div className="font-bold text-sm">{currentUser.name}</div>
+                          <div className="text-xs text-white/40">{currentUser.email}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
                         <span className="text-xs font-bold text-white/40 px-3 py-1 rounded-full bg-white/5 border border-white/10">
-                          {member.role}
+                          Admin (You)
                         </span>
-                        <Button variant="ghost" size="icon" className="text-white/20 hover:text-white">
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="p-6 text-white/30 text-sm">Loading...</div>
+                  )}
                 </div>
               </GlassCard>
             )}
           </motion.div>
         </AnimatePresence>
 
-        {/* Floating Actions — only shown for AI/Bias tabs that have toggles */}
+        {/* Floating Save — AI/Bias tabs */}
         {(activeTab === "ai" || activeTab === "bias") && (
           <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-50">
             <GlassCard className="bg-black/80 backdrop-blur-2xl border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center justify-between p-4 px-8">
-              <span className="text-sm font-medium text-white/50 hidden md:block">You have unsaved changes</span>
+              <span className="text-sm font-medium text-white/50 hidden md:block">
+                {settingsSaved ? "Saved!" : "Save your changes"}
+              </span>
               <div className="flex items-center gap-3 w-full md:w-auto">
-                <Button variant="ghost" size="sm" className="flex-1 md:flex-none">Reset</Button>
-                <Button size="md" className="flex-1 md:flex-none px-10 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                  Save All Changes
+                <Button variant="ghost" size="sm" className="flex-1 md:flex-none" onClick={() => {
+                  setAiSettings({ analysisDepth:"comprehensive", confidenceThreshold:75, realtimeAnalysis:true, autoTranscription:true, sentimentAnalysis:true, bodyLanguageDetection:true, voiceToneAnalysis:true });
+                  setBiasSettings({ demographicBlinding:true, nameBlinding:false, ageBlinding:true, genderBlinding:true, accentNeutralization:true, biasAlertThreshold:60, fairnessReporting:true, diversityMetrics:true });
+                }}>Reset</Button>
+                <Button size="md" className="flex-1 md:flex-none px-10 shadow-[0_0_20px_rgba(59,130,246,0.3)]" onClick={handleSaveSettings} disabled={settingsSaving}>
+                  {settingsSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : settingsSaved ? "Saved!" : "Save All Changes"}
                 </Button>
               </div>
             </GlassCard>
