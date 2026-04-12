@@ -26,18 +26,20 @@ import {
   type RubricEvaluation,
 } from "@/lib/ai/competencyRubric";
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Initialize OpenAI client lazily — only when a request arrives with a valid key
+function getOpenAI(): OpenAI {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OpenAI API key not configured. Add OPENAI_API_KEY to .env.local");
+  return new OpenAI({ apiKey: key });
+}
 
 export async function POST(request: NextRequest) {
   try {
     // Check if API key is configured
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
-        { error: "OpenAI API key not configured. Add OPENAI_API_KEY to .env.local" },
-        { status: 500 }
+        { error: "OpenAI API key not configured. Add OPENAI_API_KEY to .env.local", missing: "OPENAI_API_KEY" },
+        { status: 503 }
       );
     }
 
@@ -97,7 +99,7 @@ async function generateInterviewQuestions(params: {
   const skillsText = skills.length > 0 ? `Key skills to assess: ${skills.join(", ")}` : "";
   const typesText = questionTypes.join(", ");
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -150,7 +152,7 @@ async function evaluateAnswer(params: {
     });
   }
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -201,7 +203,7 @@ async function generateInsight(params: {
 }) {
   const { detectionData, currentQuestion, interviewContext } = params;
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -257,7 +259,7 @@ ${context ? `Current interview context: ${context}` : ""}
 Keep responses concise and actionable.`,
   };
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [systemMessage, ...messages],
     temperature: 0.7,
@@ -296,7 +298,7 @@ async function generateFeedback(params: {
     .map((q, i) => `Q${i + 1}: ${q.question}\nA: ${q.answer}\n${q.score ? `Score: ${q.score}` : ""}`)
     .join("\n\n");
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -468,7 +470,7 @@ async function conductInterview(params: {
       }
 
       // Generate contextual response using AI
-      const completion = await openai.chat.completions.create({
+      const completion = await getOpenAI().chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
@@ -534,7 +536,7 @@ async function generateFollowUp(params: {
     return NextResponse.json({ followUp: null });
   }
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -590,7 +592,7 @@ async function evaluateAnswerWithRubric(params: {
 
   const rubricPrompt = generateRubricPrompt(question, answer, position);
 
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -712,7 +714,7 @@ async function generateFeedbackWithRubric(params: {
   const recommendation = getRecommendation(overallScore, finalCompetencies);
 
   // Generate detailed summary using AI
-  const completion = await openai.chat.completions.create({
+  const completion = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {

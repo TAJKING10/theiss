@@ -1,0 +1,8 @@
+librosa==0.11.0
+numpy>=2.0
+scikit-learn>=1.8
+scipy>=1.17
+soundfile>=0.13
+fastapi>=0.135
+uvicorn>=0.44
+python-multipart>=0.0.26

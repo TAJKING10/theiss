@@ -48,6 +48,10 @@ import { useSpeechRecognition, useTextToSpeech } from "@/hooks/useSpeechRecognit
 import { AIAvatar, AIAvatarCompact, type AIState } from "@/components/interview/AIAvatar";
 import { MediaControls, ProgressIndicator } from "@/components/interview/ConversationControls";
 import { ParticipantPanel } from "@/components/interview/ParticipantPanel";
+import { EmotionPanel } from "@/components/interview/EmotionPanel";
+import { BodyLanguagePanel } from "@/components/interview/BodyLanguagePanel";
+import { useSpeechEmotionDetection } from "@/hooks/useSpeechEmotionDetection";
+import { useBodyLanguageDetection } from "@/hooks/useBodyLanguageDetection";
 import { cn } from "@/lib/utils";
 import type { InterviewWithCandidate, InterviewQuestion } from "@/lib/supabase/types";
 
@@ -150,6 +154,37 @@ export default function InterviewSessionPage() {
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   const [aiSpeechEnabled, setAiSpeechEnabled] = useState(true);
   const [currentEmotion, setCurrentEmotion] = useState("focused");
+
+  // Real speech emotion detection
+  const {
+    currentEmotion: speechEmotion,
+    emotionHistory,
+    dominantEmotion,
+    isAnalyzing: isAnalyzingEmotion,
+    apiAvailable: emotionApiAvailable,
+  } = useSpeechEmotionDetection({
+    enabled: stage === "interview",
+    sampleInterval: 5000,
+  });
+
+  // Body language detection (visual — uses webcam frames)
+  // videoRef is declared below; hook accesses it reactively
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const {
+    current: bodyLanguage,
+    dominant: dominantBodyLanguage,
+    averageScore: blAvgScore,
+    eyeContactPct,
+    goodPosturePct,
+    isAnalyzing: isAnalyzingBL,
+    apiAvailable: blApiAvailable,
+  } = useBodyLanguageDetection({
+    videoRef,
+    enabled: stage === "interview",
+    intervalMs: 3000,
+  });
+
   const [liveTranscript, setLiveTranscript] = useState("");
   const [isProcessingCommand, setIsProcessingCommand] = useState(false);
   const [lastProcessedCommand, setLastProcessedCommand] = useState("");
@@ -170,6 +205,17 @@ export default function InterviewSessionPage() {
     improvements: string[];
     summary: string;
   } | null>(null);
+  const [scoreBreakdown, setScoreBreakdown] = useState<{
+    answerScore: number;
+    bodyLangScore: number;
+    speechEmotionScore: number;
+    bodyLangApiUsed: boolean;
+    speechApiUsed: boolean;
+    dominantBodyLang: string | null;
+    dominantEmotion: string | null;
+    eyeContactPct: number;
+    goodPosturePct: number;
+  } | null>(null);
 
   // Human Override State
   const [humanOverride, setHumanOverride] = useState<{
@@ -187,7 +233,6 @@ export default function InterviewSessionPage() {
   });
   const [showOverrideModal, setShowOverrideModal] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const emotionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const commandCooldownRef = useRef<boolean>(false);
@@ -418,13 +463,17 @@ export default function InterviewSessionPage() {
     return () => clearInterval(interval);
   }, [stage, isPaused]);
 
-  // Emotion detection simulation
+  // Sync real emotion to legacy currentEmotion state (used in badge overlay)
   useEffect(() => {
-    if (stage === "interview" && cameraReady) {
-      emotionIntervalRef.current = setInterval(() => {
-        const emotions = ["focused", "confident", "thoughtful", "engaged", "neutral"];
-        setCurrentEmotion(emotions[Math.floor(Math.random() * emotions.length)]);
+    if (emotionApiAvailable && speechEmotion.emotion) {
+      setCurrentEmotion(speechEmotion.label);
+    }
+  }, [speechEmotion, emotionApiAvailable]);
 
+  // Keep metrics animated when emotion API is unavailable (fallback simulation)
+  useEffect(() => {
+    if (stage === "interview" && cameraReady && !emotionApiAvailable) {
+      emotionIntervalRef.current = setInterval(() => {
         setMetrics(prev => ({
           confidence: Math.min(100, Math.max(50, prev.confidence + (Math.random() - 0.5) * 4)),
           engagement: Math.min(100, Math.max(50, prev.engagement + (Math.random() - 0.5) * 4)),
@@ -435,7 +484,7 @@ export default function InterviewSessionPage() {
     return () => {
       if (emotionIntervalRef.current) clearInterval(emotionIntervalRef.current);
     };
-  }, [stage, cameraReady]);
+  }, [stage, cameraReady, emotionApiAvailable]);
 
   // Reconnect video stream when entering interview stage
   useEffect(() => {
@@ -1041,26 +1090,64 @@ export default function InterviewSessionPage() {
     stopSpeaking();
     stopCamera();
 
-    // Calculate final score - TRANSCRIPT-BASED ONLY
-    // Note: Face/emotion metrics are collected for RESEARCH TELEMETRY ONLY
-    // They are NOT used in hiring recommendations per EU AI Act compliance
+    // ── Component 1: Answer Quality (60%) ────────────────────────────────────
     const answeredQuestions = answers.filter(a => a.score > 0);
-    const avgScore = answeredQuestions.length > 0
+    const answerScore = answeredQuestions.length > 0
       ? Math.round(answeredQuestions.reduce((sum, a) => sum + a.score, 0) / answeredQuestions.length)
       : 70;
 
-    // Face metrics stored for research analysis only - excluded from final score
+    // ── Component 2: Body Language (25%) ─────────────────────────────────────
+    // Combine body language class score + eye contact + good posture
+    let bodyLangScore = 0;
+    if (blApiAvailable && blAvgScore > 0) {
+      const eyeBonus    = eyeContactPct  * 0.3;   // up to 30 pts for eye contact
+      const postureBonus= goodPosturePct * 0.3;   // up to 30 pts for good posture
+      const classBase   = blAvgScore     * 0.4;   // up to 40 pts for body language class
+      bodyLangScore = Math.min(100, Math.round(classBase + eyeBonus + postureBonus));
+    } else {
+      bodyLangScore = answerScore; // fallback: mirror answer score if API offline
+    }
+
+    // ── Component 3: Speech Emotion (15%) ─────────────────────────────────────
+    // Map dominant emotion to a score
+    const emotionScoreMap: Record<string, number> = {
+      relaxed: 90, happy: 85, neutral: 70, surprised: 65,
+      nervous: 45, stressed: 35, sad: 30, angry: 20,
+    };
+    let speechEmotionScore = 0;
+    if (emotionApiAvailable && dominantEmotion) {
+      speechEmotionScore = emotionScoreMap[dominantEmotion.toLowerCase()] ?? 60;
+    } else {
+      speechEmotionScore = answerScore; // fallback
+    }
+
+    // ── Combined Final Score ──────────────────────────────────────────────────
+    const final = Math.round(
+      answerScore      * 0.60 +
+      bodyLangScore    * 0.25 +
+      speechEmotionScore * 0.15
+    );
+
+    const scoreBreakdown = {
+      answerScore,
+      bodyLangScore,
+      speechEmotionScore,
+      bodyLangApiUsed:   blApiAvailable,
+      speechApiUsed:     emotionApiAvailable,
+      dominantBodyLang:  dominantBodyLanguage,
+      dominantEmotion:   dominantEmotion,
+      eyeContactPct,
+      goodPosturePct,
+    };
+
     const researchTelemetry = {
       confidence: Math.round(metrics.confidence),
       engagement: Math.round(metrics.engagement),
-      clarity: Math.round(metrics.clarity),
-      note: "Research telemetry only - not used in hiring recommendation"
+      clarity:    Math.round(metrics.clarity),
     };
 
-    // Final score is 100% based on answer quality (transcript evidence)
-    const final = avgScore;
-
     setFinalScore(final);
+    setScoreBreakdown(scoreBreakdown);
 
     // Determine recommendation
     if (final >= 80) {
@@ -1075,7 +1162,7 @@ export default function InterviewSessionPage() {
     let feedbackResult = {
       strengths: ["Good communication skills", "Showed enthusiasm"],
       improvements: ["Could provide more specific examples"],
-      summary: `Overall score: ${final}%. ${final >= 80 ? "Strong candidate." : final >= 60 ? "Promising candidate." : "Needs development."}`,
+      summary: `Overall score: ${final}% (Answers: ${answerScore}% | Body Language: ${bodyLangScore}% | Speech: ${speechEmotionScore}%). ${final >= 80 ? "Strong candidate." : final >= 60 ? "Promising candidate." : "Needs development."}`,
     };
 
     try {
@@ -1118,23 +1205,40 @@ export default function InterviewSessionPage() {
       console.error("Failed to save transcript:", error);
     }
 
-    // Save to database — includes feedback so results page can display it
+    // Save to database — includes full score breakdown
     await completeInterview(interviewId, final, notes, {
       duration,
       questionsAnswered: answers.length,
       answers: answers,
       feedback: feedbackResult,
       recommendation: final >= 80 ? "approved" : final >= 60 ? "review" : "rejected",
-      // Research telemetry - NOT used in scoring/recommendation
+      scoreBreakdown,
       researchTelemetry: {
         ...researchTelemetry,
-        disclaimer: "Video-based metrics collected for research analysis only. Not used in hiring recommendation per EU AI Act high-risk employment AI guidelines."
+        speechEmotionAnalysis: {
+          dominant: dominantEmotion,
+          score: speechEmotionScore,
+          history: emotionHistory.slice(0, 10).map(e => ({
+            emotion: e.emotion,
+            label: e.label,
+            confidence: e.confidence,
+            timestamp: e.timestamp,
+          })),
+          apiUsed: emotionApiAvailable,
+        },
+        bodyLanguageAnalysis: {
+          dominant: dominantBodyLanguage,
+          score: bodyLangScore,
+          averageScore: blAvgScore,
+          eyeContactPct,
+          goodPosturePct,
+          apiUsed: blApiAvailable,
+        },
       },
       scoringMethodology: {
-        version: "1.0",
-        method: "transcript-based rubric scoring",
-        faceMetricsUsed: false,
-        humanOversightRequired: true
+        version: "2.0",
+        method: "multimodal — answers 60% + body language 25% + speech emotion 15%",
+        weights: { answers: 0.60, bodyLanguage: 0.25, speechEmotion: 0.15 },
       }
     });
 
@@ -1610,8 +1714,12 @@ export default function InterviewSessionPage() {
                       <span className="px-2 py-1 rounded-full bg-green-500/20 border border-green-500/40 text-green-100 text-xs flex items-center gap-1">
                         <Eye className="w-3 h-3" />
                       </span>
-                      <span className="px-2 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-100 text-xs capitalize">
-                        {currentEmotion}
+                      <span className="px-2 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-100 text-xs capitalize flex items-center gap-1">
+                        {emotionApiAvailable ? (
+                          <>{speechEmotion.emoji} {speechEmotion.label}</>
+                        ) : (
+                          currentEmotion
+                        )}
                       </span>
                     </div>
                     {/* Candidate Name Badge */}
@@ -1864,6 +1972,26 @@ export default function InterviewSessionPage() {
                 </div>
               </GlassCard>
 
+              {/* Speech Emotion Detection */}
+              <EmotionPanel
+                currentEmotion={speechEmotion}
+                emotionHistory={emotionHistory}
+                dominantEmotion={dominantEmotion}
+                isAnalyzing={isAnalyzingEmotion}
+                apiAvailable={emotionApiAvailable}
+              />
+
+              {/* Body Language Detection */}
+              <BodyLanguagePanel
+                current={bodyLanguage}
+                dominant={dominantBodyLanguage}
+                averageScore={blAvgScore}
+                eyeContactPct={eyeContactPct}
+                goodPosturePct={goodPosturePct}
+                isAnalyzing={isAnalyzingBL}
+                apiAvailable={blApiAvailable}
+              />
+
               {/* Live Metrics */}
               <GlassCard className="p-4">
                 <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
@@ -1976,13 +2104,97 @@ export default function InterviewSessionPage() {
             </div>
           </div>
 
-          {/* Scoring Methodology Notice */}
-          <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 mb-6">
-            <div className="flex items-center gap-2 text-blue-300 text-sm">
-              <Info className="w-4 h-4" />
-              <span>Score based on transcript analysis only. Human oversight required for final decision.</span>
+          {/* Score Breakdown — all three analysis streams */}
+          {scoreBreakdown && (
+            <div className="mb-6 space-y-3">
+              <h3 className="text-sm font-semibold text-white/50 uppercase tracking-widest text-center mb-4">
+                Score Breakdown
+              </h3>
+
+              {/* Answer Quality */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">📝</span>
+                    <div>
+                      <p className="font-semibold text-sm">Answer Quality</p>
+                      <p className="text-xs text-white/40">AI rubric evaluation of responses</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-2xl font-bold text-blue-400">{scoreBreakdown.answerScore}%</span>
+                    <p className="text-xs text-white/30">weight: 60%</p>
+                  </div>
+                </div>
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${scoreBreakdown.answerScore}%` }} />
+                </div>
+              </div>
+
+              {/* Body Language */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🧍</span>
+                    <div>
+                      <p className="font-semibold text-sm">Body Language</p>
+                      <p className="text-xs text-white/40">
+                        {scoreBreakdown.bodyLangApiUsed
+                          ? `${scoreBreakdown.dominantBodyLang ?? "Detected"} · Eye contact ${scoreBreakdown.eyeContactPct}% · Good posture ${scoreBreakdown.goodPosturePct}%`
+                          : "API offline — used answer score as fallback"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-2xl font-bold ${scoreBreakdown.bodyLangScore >= 70 ? "text-green-400" : scoreBreakdown.bodyLangScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                      {scoreBreakdown.bodyLangScore}%
+                    </span>
+                    <p className="text-xs text-white/30">weight: 25%</p>
+                  </div>
+                </div>
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${scoreBreakdown.bodyLangScore >= 70 ? "bg-green-500" : scoreBreakdown.bodyLangScore >= 50 ? "bg-yellow-500" : "bg-red-500"}`}
+                    style={{ width: `${scoreBreakdown.bodyLangScore}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Speech Emotion */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🎙️</span>
+                    <div>
+                      <p className="font-semibold text-sm">Speech Emotion</p>
+                      <p className="text-xs text-white/40">
+                        {scoreBreakdown.speechApiUsed
+                          ? `Dominant: ${scoreBreakdown.dominantEmotion ?? "Neutral"}`
+                          : "API offline — used answer score as fallback"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-2xl font-bold ${scoreBreakdown.speechEmotionScore >= 70 ? "text-green-400" : scoreBreakdown.speechEmotionScore >= 50 ? "text-yellow-400" : "text-red-400"}`}>
+                      {scoreBreakdown.speechEmotionScore}%
+                    </span>
+                    <p className="text-xs text-white/30">weight: 15%</p>
+                  </div>
+                </div>
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${scoreBreakdown.speechEmotionScore >= 70 ? "bg-green-500" : scoreBreakdown.speechEmotionScore >= 50 ? "bg-yellow-500" : "bg-red-500"}`}
+                    style={{ width: `${scoreBreakdown.speechEmotionScore}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Formula */}
+              <p className="text-center text-white/30 text-xs pt-1">
+                Final = Answers×60% + Body Language×25% + Speech Emotion×15%
+              </p>
             </div>
-          </div>
+          )}
 
           {/* Competency Breakdown - The main scoring */}
           {answers.some(a => a.competencies && a.competencies.length > 0) && (
@@ -2042,32 +2254,6 @@ export default function InterviewSessionPage() {
             </div>
           )}
 
-          {/* Research Telemetry - NOT used in scoring */}
-          <div className="mb-8">
-            <div className="flex items-center justify-center gap-2 mb-3">
-              <span className="text-white/30 text-xs uppercase tracking-wider">Research Telemetry</span>
-              <span className="px-2 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-                Not Used in Score
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-6">
-              <div className="text-center opacity-60">
-                <div className="text-xl font-bold text-blue-400/70">{Math.round(metrics.confidence)}%</div>
-                <div className="text-white/30 text-sm">Confidence</div>
-              </div>
-              <div className="text-center opacity-60">
-                <div className="text-xl font-bold text-green-400/70">{Math.round(metrics.engagement)}%</div>
-                <div className="text-white/30 text-sm">Engagement</div>
-              </div>
-              <div className="text-center opacity-60">
-                <div className="text-xl font-bold text-purple-400/70">{Math.round(metrics.clarity)}%</div>
-                <div className="text-white/30 text-sm">Clarity</div>
-              </div>
-            </div>
-            <p className="text-center text-white/20 text-xs mt-2">
-              Video metrics collected for research analysis only per EU AI Act guidelines
-            </p>
-          </div>
 
           {/* Summary */}
           {feedback && (
